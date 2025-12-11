@@ -1,91 +1,88 @@
-from agent_metadata import  AgentMetadata
-from prompts import ORCHESTRATOR_SYSTEM_PROMPT
+from agents.agent_metadata import AgentMetadata
+from prompts.orchestrator_prompts import ORCHESTRATOR_SYSTEM_PROMPT
+from prompts.agent_prompts import SCOUT_PROMPT, CONTENT_PROMPT, EXERCISE_PROMPT, GENERAL_PROMPT
 from langchain_core.messages import SystemMessage, HumanMessage
-from orchestrator_agent.config import llm
+from config import llm
 import json
 
 
 class OrchestratorAgent:
 
-    """Orchestrator agent that routes queries to appropriate sub-agents"""
+    """Orchestrator agent that routes queries to appropriate sub-agents and generates responses."""
     
     def __init__(self):
         self.llm = llm
         self.agent_metadata = AgentMetadata()
+        self.agent_prompts = {
+            "SCOUT": SCOUT_PROMPT,
+            "CONTENT": CONTENT_PROMPT,
+            "EXERCISE": EXERCISE_PROMPT,
+            "GENERAL": GENERAL_PROMPT
+        }
 
     def _extract_json(self, text:str) -> dict:
         """Extract JSON object from text response"""
+        import re
         try:
-            start = text.index("{")
-            end = text.rindex("}") + 1
-            json_str = text[start:end]
-            return json.loads(json_str)
-        except (ValueError, json.JSONDecodeError) as e:
-            raise ValueError(f"Failed to extract JSON: {str(e)}")
+            # Match strict JSON object
+            match = re.search(r"\{.*\}", text, re.DOTALL)
+            if match:
+                json_str = match.group(0)
+                return json.loads(json_str)
+            else:
+                raise ValueError("No JSON object found in response.")
+        except Exception as e:
+            # Fallback for simple general queries if JSON fails
+            # Log the failure for debugging
+            print(f"DEBUG: JSON Parsing Failed for: '{text}'. Error: {e}")
+            return {"Assigned_Agent": "GENERAL", "Reasoning": "Fallback due to JSON error.", "User_Query": text}
 
-    
-
-    def  route_query(self, user_query:str) -> str:
-        """Route user query to appropriate agent"""
-
-        try:
-
-            agents_descriptions = self.agent_metadata.get_agent_descriptions()
-            system_msg = ORCHESTRATOR_SYSTEM_PROMPT.format(agent_descriptions = agents_descriptions).strip()
+    def _generate_agent_response(self, agent_name: str, user_query: str) -> str:
+        """Generate a response using the specific agent's persona."""
+        system_prompt = self.agent_prompts.get(agent_name, GENERAL_PROMPT)
         
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_query)
+        ]
+        
+        response = self.llm.invoke(messages)
+        return response.content
 
-            response = self.llm.invoke([
-                SystemMessage(content=system_msg),
-                HumanMessage(content= f"User Query: {user_query}")
-                ])
+    def process_query(self, user_query:str) -> dict:
+        """Route user query to appropriate agent and get the response."""
 
-
-            decesion = self._extract_json(response.content)
-
-            if "Assigned_Agent" not in decesion or "Reasoning" not in decesion or "User_Query" not in decesion:
-                raise ValueError("Invalid response structure from orchestrator LLM.")
+        try:
+            # 1. Orchestration Step (Intent Analysis)
+            agents_descriptions = self.agent_metadata.get_agent_descriptions()
+            # Note: prompts.orchestrator_prompts already has the full prompt, so description injection might be redundant 
+            # if the prompt text is hardcoded. Checking the prompt file...
+            # The prompt file currently has hardcoded descriptions. 
+            # Let's just use the prompt as is.
             
-            user_query = decesion["User_Query"]
-            assigned_agent = decesion["Assigned_Agent"]
-            reasoning = decesion["Reasoning"]
-            final_response = f"\n -> User Query: {user_query}\n -> Routed to {assigned_agent} agent.\n -> Reasoning: {reasoning}\n"
-            
+            orchestrator_messages = [
+                SystemMessage(content=ORCHESTRATOR_SYSTEM_PROMPT),
+                HumanMessage(content=f"User Query: {user_query}")
+            ]
 
-            return final_response
+            decision_response = self.llm.invoke(orchestrator_messages)
+            decision = self._extract_json(decision_response.content)
+
+            assigned_agent = decision.get("Assigned_Agent", "GENERAL").upper()
+            reasoning = decision.get("Reasoning", "No reasoning provided.")
+
+            # 2. Generation Step (Get the actual answer)
+            agent_response = self._generate_agent_response(assigned_agent, user_query)
+
+            return {
+                "agent": assigned_agent,
+                "reasoning": reasoning,
+                "response": agent_response
+            }
 
         except Exception as e:
-            return f"Error routing query: {str(e)}"
-
-
-        
-agent = OrchestratorAgent()
-
-'''
-response = agent.route_query("I want to learn programing and  I am good in maths")
-print(response)
-
-
-response = agent.route_query("Linked list in python")
-print(response)
-
-response = agent.route_query("Teach me pointers concept in c language using exercises")
-print(response)
-
-response = agent.route_query("Give me coding problems on recursion")
-print(response)
-
-
-response = agent.route_query("generate challenges for learning React")
-print(response)
-
-
-response = agent.route_query("I want to leanrn data science from scratch")
-print(response)
-
-response = agent.route_query("I am good computer basics, but want to become a web developer")
-print(response)
-
-'''
-
-response = agent.route_query("Explain the concept of polymorphism in OOP")
-print(response)
+            return {
+                "agent": "ERROR",
+                "reasoning": f"An error occurred: {str(e)}",
+                "response": "I apologize, but I encountered an error while processing your request."
+            }
