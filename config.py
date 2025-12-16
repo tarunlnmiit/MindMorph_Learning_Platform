@@ -1,13 +1,16 @@
-from langchain_ollama import ChatOllama
+import os
+from dotenv import load_dotenv
+from langchain_groq import ChatGroq
 
-# 1. Ollama LLM configuration
+load_dotenv()
 
-server_url = "http://127.0.0.1:11434"
-model_name = "llama3.2:1b"
+model_name = "llama-3.3-70b-versatile" 
 temperature_setting = 0.1
 
-llm = ChatOllama(base_url=server_url,
-              model=model_name,
-                temperature=temperature_setting)
+if not os.getenv("GROQ_API_KEY"):
+    raise ValueError("GROQ_API_KEY not found. Please check your .env file.")
 
-
+llm = ChatGroq(
+    model=model_name,
+    temperature=temperature_setting
+)
