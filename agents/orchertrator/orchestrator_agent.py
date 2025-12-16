@@ -7,8 +7,8 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 sys.path.append(PROJECT_ROOT)
 
 from langsmith import Client
-from agents_personality import  AgentMetadata
-from  prompts.orchestrator_prompts import ORCHESTRATOR_SYSTEM_PROMPT
+from agents.orchertrator.orchestrator_agents_personality import  AgentMetadata
+from  prompts.orchestrator_prompt import ORCHESTRATOR_SYSTEM_PROMPT
 from langchain_core.prompts import (
     ChatPromptTemplate,
     SystemMessagePromptTemplate,
@@ -61,7 +61,7 @@ class OrchestratorAgent:
                 print("Prompt pushed to langsmith successfully.")
 
             except Exception as e:
-                print(f"Warning: Failed to push prompt to langsmith. Error: {str(e)}")
+                print(f"Warning: Failed to push orchestrator agent's system prompt to langsmith. Error: {str(e)}")
     
             
     def  route_query(self, user_query: str) -> Optional[Orchestrator_Output_Schema]:
