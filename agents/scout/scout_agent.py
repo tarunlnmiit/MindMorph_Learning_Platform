@@ -6,14 +6,8 @@ from typing import Optional
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(PROJECT_ROOT)
 
-from langsmith import Client
 from config import llm
-from langchain_core.prompts import (
-    ChatPromptTemplate,
-    SystemMessagePromptTemplate,
-    HumanMessagePromptTemplate
-)
-
+from prompts.prompt_registry_wrapper_method import setup_agent_prompt
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage  
 from prompts.scout_prompt import SCOUT_SYSTEM_PROMPT
 from scout_agents_personalities import scout_agent_personalities
@@ -25,33 +19,17 @@ class ScoutAgent:
     def __init__(self, push_to_langsmith: bool = False):
         self.llm = llm
         self.agent_personality = scout_agent_personalities()
-        self.langsmith_client = Client()  # Initialize LangSmith client
-        self._setup_prompt(push_to_langsmith) # Setup prompt once during initialization
-
-
-
-    def _setup_prompt(self, push_to_langsmith: bool = False):
-        '''Setup the prompt templates for the scout agent and push to LangSmith if required.'''
-        sub_agent_descriptions = self.agent_personality.get_scout_agent_description()
-
-        formatted_system_prompt = SCOUT_SYSTEM_PROMPT.format(
-            sub_agent_descriptions = sub_agent_descriptions
+        self.chat_prompt = setup_agent_prompt(
+            system_prompt=SCOUT_SYSTEM_PROMPT,
+            agent_descriptions=self.agent_personality.get_scout_agent_description(),
+            human_template="User Query: {user_query}",
+            push_to_langsmith=push_to_langsmith,
+            prompt_identifier="scout_agent_system_prompt",
+            description="Prompt used by the Scout Agent to generate specialized queries for sub-agents(Academic, Market, Practical).",
+            tags=["scout", " specialized query generation", "agent"]
         )
-        system_template = SystemMessagePromptTemplate.from_template(formatted_system_prompt)
-        human_template = HumanMessagePromptTemplate.from_template("User Query: {user_query}")
-        self.chat_prompt = ChatPromptTemplate.from_messages([system_template, human_template])
 
-        if push_to_langsmith:
-            try:
-                self.langsmith_client.push_prompt(
-                        object= self.chat_prompt,
-                        description="Prompt used by the Scout Agent to generate specialized queries for sub-agents.",
-                        tags=["scout", "query generation", "agent"],
-                        prompt_identifier="scout_agent_system_prompt" 
-                    )
-                print("Scout Agent prompt pushed to LangSmith successfully.")
-            except Exception as e:
-                print(f"Warning: Failed to push scout agent's system prompt to langsmith. Error: {str(e)}")
+    
 
 
     def generate_specialized_queries(self, user_query:str):
@@ -73,13 +51,45 @@ class ScoutAgent:
              return response
         except Exception as e:
                 print(f"Error generating specialized queries: {str(e)}")
-                return None
+                raise e
+        
             
             
 
 
         
 # Example usage
-scout_agent = ScoutAgent(push_to_langsmith = False)
+scout_agent = ScoutAgent(push_to_langsmith = True)
 response = scout_agent.generate_specialized_queries("I want to learn web development")
 print(response.content)
+
+
+
+
+
+'''
+
+
+def _setup_prompt(self, push_to_langsmith: bool = False):
+    
+        sub_agent_descriptions = self.agent_personality.get_scout_agent_description()
+
+        formatted_system_prompt = SCOUT_SYSTEM_PROMPT.format(
+            sub_agent_descriptions = sub_agent_descriptions
+        )
+        system_template = SystemMessagePromptTemplate.from_template(formatted_system_prompt)
+        human_template = HumanMessagePromptTemplate.from_template("User Query: {user_query}")
+        self.chat_prompt = ChatPromptTemplate.from_messages([system_template, human_template])
+
+        if push_to_langsmith:
+            try:
+                self.langsmith_client.push_prompt(
+                        object= self.chat_prompt,
+                        description="Prompt used by the Scout Agent to generate specialized queries for sub-agents.",
+                        tags=["scout", "query generation", "agent"],
+                        prompt_identifier="scout_agent_system_prompt" 
+                    )
+                print("Scout Agent prompt pushed to LangSmith successfully.")
+            except Exception as e:
+                print(f"Warning: Failed to push scout agent's system prompt to langsmith. Error: {str(e)}")
+                '''

@@ -5,7 +5,7 @@ And then synthesize their responses into a coherent learning roadmap.
 
 === YOUR SUB-AGENTS ===
 
-{sub_agent_descriptions}
+{agent_descriptions}
 
 === YOUR WORKFLOW ===
 
