@@ -1,36 +1,67 @@
 # MindMorph Learning Platform
 
-MindMorph is an intelligent learning platform that uses AI agents to personalize your learning journey.
+## Environment Setup
 
-## Features
+### 1. Prerequisites
 
-- **Personalized Learning Paths**: The Scout Agent analyzes your goals and creates a tailored plan.
-- **Interactive Exercises**: The Exercise Agent provides hands-on coding challenges.
-- **Knowledge Base**: The Content Agent explains complex concepts simply.
-- **Smart Routing**: An Orchestrator Agent automatically directs your queries to the right specialist.
+Ensure you have [Conda](https://docs.conda.io/en/latest/) installed (Anaconda or Miniconda).
 
-## Setup
+### 2. Create and Activate Virtual Environment
 
-1.  **Clone the repository**.
-2.  **Create a virtual environment**:
-    ```bash
-    python -m venv .venv
-    .\.venv\Scripts\activate
-    ```
-3.  **Install dependencies**:
-    ```bash
-    pip install -r requirements.txt
-    ```
-4.  **Configure Environment**:
-    - Rename/Copy `.env.example` to `.env` (if applicable) or create `.env`.
-    - Add your Groq API Key: `GROQ_API_KEY=gsk_...`
-
-## Usage
-
-Run the application:
+Open your terminal or command prompt and run the following commands:
 
 ```bash
-python app.py
+# Create a new conda environment named 'mindmorph' with Python 3.11
+conda create -n mindmorph python=3.11 -y
+
+# Activate the environment
+conda activate mindmorph
 ```
 
-Type your learning goal or question, and the specific agent will assist you.
+### 3. Install Dependencies
+
+Install the required Python packages:
+
+```bash
+pip install -r requirements.txt
+```
+
+### 4. Environment Configuration
+
+1.  Create a `.env` file in the root directory.
+2.  Add your Groq API key (required for the LLM):
+
+```env
+GROQ_API_KEY=your_api_key_here
+```
+
+## Running the Content Generator
+
+The Content Generator Agent allows you to generate educational content in different formats (Boost, Builder, Sprint).
+
+To run the interactive agent:
+
+```bash
+python agents/content_generator/content_agent.py
+```
+
+### Usage
+
+1.  Open `agents/content_generator/content_agent.py` in your editor.
+2.  Scroll to the bottom of the file to the `__main__` block.
+3.  Manually modify the `generate_content` call with your **Topic** and **Format** ("A", "B", or "C"):
+
+    ```python
+    # Format Options:
+    # "A": 5-min Boost (Quick summary)
+    # "B": 20-min Builder (Standard lesson)
+    # "C": 2-hour Sprint (Deep dive)
+
+    lesson = agent.generate_content("Your Topic Here", "A")
+    ```
+
+4.  Run the script:
+
+    ```bash
+    python agents/content_generator/content_agent.py
+    ```
