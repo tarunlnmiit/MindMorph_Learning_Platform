@@ -78,7 +78,7 @@ agent = ContentAgent(push_to_langsmith=False)
 # "A: 5-min Boost (Immediate)"
 # "B: 20-min Builder (Standard)"
 # "C: 2-hour Sprint (Deep Dive)"
-lesson = agent.generate_content( "langsmith in python", "A")
+lesson = agent.generate_content( "want to learn github" , "B")
 print("\n" + "="*50 + "\n")
 print(lesson)
 print("\n" + "="*50 + "\n")

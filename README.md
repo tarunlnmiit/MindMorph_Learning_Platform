@@ -42,7 +42,7 @@ The Content Generator Agent allows you to generate educational content in differ
 To run the interactive agent:
 
 ```bash
-python agents/content_generator/content_agent.py
+python agents/content_generator/content_agent.py 
 ```
 
 ### Usage
