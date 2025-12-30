@@ -28,13 +28,18 @@ class MCPClientInitialization:
             self.client = MultiServerMCPClient(
                 {
                     "github": {
-                        "transport": "stdio",
-                        "command": "docker",  # Use full path instead of just "npx"
-                        "args": ["exec", "-i", "mcp-github-server", "node", "/app/dist/index.js"],
-                        "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": self.token}
+                        "transport": "http",
+                        "url": "https://api.githubcopilot.com/mcp/",
+                        "headers": {
+                            "Authorization": f"Bearer {self.token}"
+                        }
                     }
-                }
+                },
+            
             )
+
+
+                            
             print("MCP client created, fetching available tools...")
 
             tools = await self.client.get_tools()
@@ -82,3 +87,16 @@ if __name__ == "__main__":
     # Run everything in a single event loop
     asyncio.run(main())
  
+
+
+"""
+ self.client = MultiServerMCPClient(
+                {
+                    "github": {
+                        "transport": "stdio",
+                        "command": "docker",  # Use full path instead of just "npx"
+                        "args": ["exec", "-i", "mcp-github-server", "node", "/app/dist/index.js"],
+                        "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": self.token}
+                    }
+                }
+            )"""
