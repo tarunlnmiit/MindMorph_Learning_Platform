@@ -1,7 +1,3 @@
-# tools/github_mcp_client.py
-"""
-This script initializes a Multi-Server MCP client for GitHub using the Model Context Protocol (MCP).
-"""
 from py_compile import main
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from dotenv import load_dotenv
@@ -89,14 +85,3 @@ if __name__ == "__main__":
  
 
 
-"""
- self.client = MultiServerMCPClient(
-                {
-                    "github": {
-                        "transport": "stdio",
-                        "command": "docker",  # Use full path instead of just "npx"
-                        "args": ["exec", "-i", "mcp-github-server", "node", "/app/dist/index.js"],
-                        "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": self.token}
-                    }
-                }
-            )"""
