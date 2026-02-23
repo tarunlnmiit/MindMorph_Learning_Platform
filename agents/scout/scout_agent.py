@@ -11,7 +11,9 @@ from config import llm
 from prompts.prompt_registry_wrapper_method import setup_agent_prompt
 from prompts.scout_prompt_for_prompt import SCOUT_SYSTEM_PROMPT_FOR_PROMPT 
 from prompts.scout_prompt_for_queries import SCOUT_SYSTEM_PROMPT_FOR_QUERIES
-from scout_agents_personalities import scout_agent_personalities
+from agents.scout.scout_agents_personalities import scout_agent_personalities
+from agents.scout.scout_agent_output_schema import ScoutOutputSchema
+
 
 
 class ScoutAgent:
@@ -35,9 +37,9 @@ class ScoutAgent:
             tags=["scout", " specialized query generation", "agent"]
         )
 
+        self.structured_llm = self.llm.with_structured_output(ScoutOutputSchema)
+
     
-
-
     def generate_specialized_queries(self, user_query:str):
         '''Generates specialized queries for each sub-agent based on the user query.'''
 
@@ -53,11 +55,12 @@ class ScoutAgent:
         
         try:
              chat_prompt = self.chat_prompt.format_messages(user_query=user_query)
-             response = self.llm.invoke(chat_prompt) 
+             response = self.structured_llm.invoke(chat_prompt) 
              return response
         except Exception as e:
                 print(f"Error generating specialized queries: {str(e)}")
                 return None
+
             
             
 
@@ -66,4 +69,4 @@ class ScoutAgent:
 # Example usage
 scout_agent = ScoutAgent(push_to_langsmith = False, output_variant="Query")
 response = scout_agent.generate_specialized_queries("I want to learn web development")
-print(response.content)
+print(response)

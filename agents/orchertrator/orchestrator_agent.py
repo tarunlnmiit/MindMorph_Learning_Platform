@@ -15,7 +15,7 @@ from langchain_core.prompts import (
     HumanMessagePromptTemplate,
 )
 from config import llm
-from orchestrator_agent_output_schema import Orchestrator_Output_Schema
+from agents.orchertrator.orchestrator_agent_output_schema import Orchestrator_Output_Schema
 
 
 class OrchestratorAgent:
