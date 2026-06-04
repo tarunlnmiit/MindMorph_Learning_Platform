@@ -59,14 +59,17 @@ class MCPClientInitialization:
             result = await search_tool.ainvoke(
                 {
                     "query": query,
-                    "prPage": 5
+                    "perPage": 5
                 }
             )
             print(f"Search Results for '{query}':\n{result}")
+            return result
         except StopIteration:
             print("The 'search_repositories' tool is not available.")
+            return None
         except Exception as e:
             print(f"Error invoking tool: {e}")
+            return None
             
     async def run(self):
         await self.initialize()

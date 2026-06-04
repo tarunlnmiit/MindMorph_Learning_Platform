@@ -2,43 +2,18 @@ import streamlit as st
 import asyncio
 import os
 import sys
-import json
-from typing import Dict, Any
 
 # Ensure project root is in path
 PROJECT_ROOT = os.path.abspath(os.path.dirname(__file__))
 if PROJECT_ROOT not in sys.path:
     sys.path.append(PROJECT_ROOT)
 
-from agents.orchertrator.orchestrator_agent import OrchestratorAgent
+from agents.orchestrator.orchestrator_agent import OrchestratorAgent
 from agents.scout.scout_agent import ScoutAgent
 from agents.market.market_agent import MarketAnalysisAgent
 from agents.practical.practical_agent import PracticalAgent
-from config import llm
-import re
-
-def extract_json(text):
-    """Robustly extract JSON from a string that might contain other text or markdown."""
-    try:
-        # Try finding JSON block between ```json and ```
-        json_match = re.search(r'```json\s*(\{.*?\})\s*```', text, re.DOTALL)
-        if json_match:
-            return json.loads(json_match.group(1))
-        
-        # Try finding JSON block between generic backticks
-        json_match = re.search(r'```\s*(\{.*?\})\s*```', text, re.DOTALL)
-        if json_match:
-            return json.loads(json_match.group(1))
-
-        # Try finding absolute first { and last }
-        start_idx = text.find('{')
-        end_idx = text.rfind('}') + 1
-        if start_idx != -1 and end_idx != 0:
-            return json.loads(text[start_idx:end_idx])
-            
-        return None
-    except Exception:
-        return None
+from agents.academic.academic_agent import AcademicAgent
+from graph.learning_plan_graph import build_graph
 
 
 # CSS for better styling
@@ -71,6 +46,16 @@ def initialize_agents():
         st.session_state.market = MarketAnalysisAgent()
     if 'practical' not in st.session_state:
         st.session_state.practical = PracticalAgent(push_to_langsmith=False)
+    if 'academic' not in st.session_state:
+        st.session_state.academic = AcademicAgent(push_to_langsmith=False)
+    if 'graph' not in st.session_state:
+        st.session_state.graph = build_graph(
+            orchestrator=st.session_state.orchestrator,
+            scout=st.session_state.scout,
+            academic=st.session_state.academic,
+            market=st.session_state.market,
+            practical=st.session_state.practical,
+        )
 
 async def run_market_analysis(query: str, location: str = "United States"):
     """Helper to run async market analysis"""
@@ -107,63 +92,22 @@ def main():
 
         if st.button("🚀 Generate Learning Path") and user_query:
             with st.status("Orchestrating agents...", expanded=True) as status:
-                # Step 1: Orchestration
-                st.write("🤖 Orchestrator: Analyzing query...")
-                route_response = st.session_state.orchestrator.route_query(user_query)
-                st.write(f"Routing to: **{route_response.Assigned_Agent}**")
-                
-                if route_response.Assigned_Agent == "SCOUT":
-                    # Step 2: Scout Decomposition
-                    st.write("🔍 Scout: Decomposing goal into specialized queries...")
-                    scout_output = st.session_state.scout.generate_specialized_queries(user_query)
-                    
-                    if not scout_output:
-                         st.error("Scout agent failed to generate specialized queries.")
-                         st.stop()
+                st.write("🤖 Running orchestration graph (orchestrate → scout → academic/market/practical)...")
+                try:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    final_state = loop.run_until_complete(
+                        st.session_state.graph.ainvoke({"user_query": user_query})
+                    )
+                    loop.close()
+                except Exception as e:
+                    st.error(f"Graph execution failed: {e}")
+                    st.stop()
 
-                    # Handle structured output (Pydantic model) or fallback to text parsing
-                    if isinstance(scout_output, dict):
-                        queries = scout_output
-                    elif hasattr(scout_output, 'model_dump'): # Pydantic v2
-                        queries = scout_output.model_dump()
-                    elif hasattr(scout_output, 'dict'): # Pydantic v1
-                        queries = scout_output.dict()
-                    else:
-                        content = scout_output.content if hasattr(scout_output, 'content') else str(scout_output)
-                        queries = extract_json(content)
-                    
-                    if not queries:
-                         st.error("Scout output was not in the expected format.")
-                         st.code(str(scout_output))
-                         st.stop()
+                route = final_state.get("route", "UNKNOWN")
+                st.write(f"Routing to: **{route}**")
 
-
-                    sub_queries = queries.get("sub_agent_queries", {})
-                    st.write("✅ Specialized queries generated!")
-                    
-                    # Step 3: Sub-agent execution
-                    market_data = None
-                    practical_output = None
-                    academic_output = None
-
-                    st.write("📊 Market Analysis started...")
-                    market_query = sub_queries.get("MARKET", user_query)
-                    try:
-                        loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(loop)
-                        market_data = loop.run_until_complete(run_market_analysis(market_query))
-                        loop.close()
-                    except Exception as e:
-                        st.error(f"Market Analysis failed: {e}")
-
-                    st.write("🛠️ Practical Advice started...")
-                    practical_query = sub_queries.get("PRACTICAL", user_query)
-                    practical_output = st.session_state.practical.provide_practical_advice(practical_query)
-
-                    st.write("📚 Academic Insights started...")
-                    academic_query = sub_queries.get("ACADEMIC", user_query)
-                    academic_output = llm.invoke(f"You are an Academic Agent. Provide a curriculum/learning roadmap for: {academic_query}")
-
+                if route == "SCOUT":
                     status.update(label="✨ Learning Path Generated!", state="complete", expanded=False)
 
                     # Display Results
@@ -171,10 +115,12 @@ def main():
                     tab1, tab2, tab3 = st.tabs(["📚 Academic Roadmap", "💼 Market Intelligence", "🛠️ Practical Application"])
 
                     with tab1:
-                        if academic_output: st.markdown(academic_output.content)
+                        academic_output = final_state.get("academic_output")
+                        if academic_output: st.markdown(academic_output)
                         else: st.warning("Academic data could not be generated.")
 
                     with tab2:
+                        market_data = final_state.get("market_output")
                         if market_data:
                             job = market_data["job"]
                             st.subheader(f"{job.get('title')} at {job.get('organization')}")
@@ -183,16 +129,17 @@ def main():
                         else: st.info("No specific job data found.")
 
                     with tab3:
-                        if practical_output: st.markdown(practical_output.content)
+                        practical_output = final_state.get("practical_output")
+                        if practical_output: st.markdown(practical_output)
                         else: st.warning("Practical advice could not be generated.")
                 else:
-                    st.info(f"Routed to {route_response.Assigned_Agent}. Under development.")
+                    st.info(final_state.get("placeholder", f"Routed to {route}. Under development."))
                     status.update(label="Routing Complete", state="complete")
 
     else: # Individual Agent Test Mode
         st.subheader("Test Individual Agents")
-        agent_type = st.selectbox("Select Agent to Test", 
-                                ["Orchestrator Agent", "Scout Agent", "Market Agent", "Practical Agent"])
+        agent_type = st.selectbox("Select Agent to Test",
+                                ["Orchestrator Agent", "Scout Agent", "Academic Agent", "Market Agent", "Practical Agent"])
         
         test_query = st.text_area("Enter Test Query", height=100)
         
@@ -217,6 +164,11 @@ def main():
 
 
                         
+                    elif agent_type == "Academic Agent":
+                        result = st.session_state.academic.provide_academic_roadmap(test_query)
+                        if result: st.markdown(result.content)
+                        else: st.error("Agent failed to return a result.")
+
                     elif agent_type == "Market Agent":
                         loop = asyncio.new_event_loop()
                         asyncio.set_event_loop(loop)

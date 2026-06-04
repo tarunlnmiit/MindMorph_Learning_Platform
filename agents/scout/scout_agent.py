@@ -67,6 +67,7 @@ class ScoutAgent:
 
         
 # Example usage
-scout_agent = ScoutAgent(push_to_langsmith = False, output_variant="Query")
-response = scout_agent.generate_specialized_queries("I want to learn web development")
-print(response)
+if __name__ == "__main__":
+    scout_agent = ScoutAgent(push_to_langsmith = False, output_variant="Query")
+    response = scout_agent.generate_specialized_queries("I want to learn web development")
+    print(response)

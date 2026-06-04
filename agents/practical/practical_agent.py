@@ -30,22 +30,36 @@ class PracticalAgent:
         )
 
 
-    def provide_practical_advice(self, user_query:str):
-        '''Provides practical advice based on the user query.'''
+    def provide_practical_advice(self, user_query:str, github_repos=None):
+        '''Provides practical advice based on the user query.
+
+        Args:
+            user_query: The practical-learning query.
+            github_repos: Optional real GitHub repository search results to ground
+                the advice in concrete open-source projects. When provided, they are
+                appended to the query so the LLM can reference real projects.
+        '''
 
         # Input validation
         if not user_query or not isinstance(user_query, str):
                 raise ValueError("User query must be a non-empty string")
-            
+
         user_query = user_query.strip()
         if len(user_query) == 0:
                 raise ValueError("User query cannot be empty after stripping whitespace")
-        
+
+        if github_repos:
+            user_query = (
+                f"{user_query}\n\n"
+                f"Ground your practical advice in these real GitHub projects where relevant:\n"
+                f"{github_repos}"
+            )
+
         print("Providing practical advice...")
-        
+
         try:
              chat_prompt = self.chat_prompt.format_messages(user_query=user_query)
-             response = self.llm.invoke(chat_prompt) 
+             response = self.llm.invoke(chat_prompt)
              return response
         except Exception as e:
                 print(f"Error providing practical advice: {str(e)}")
