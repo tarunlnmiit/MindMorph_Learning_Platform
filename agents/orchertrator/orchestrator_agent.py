@@ -6,14 +6,10 @@ from typing import Optional
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(PROJECT_ROOT)
 
-from langsmith import Client
+
 from agents.orchertrator.orchestrator_agents_personality import  AgentMetadata
-from  prompts.orchestrator_prompt import ORCHESTRATOR_SYSTEM_PROMPT
-from langchain_core.prompts import (
-    ChatPromptTemplate,
-    SystemMessagePromptTemplate,
-    HumanMessagePromptTemplate,
-)
+from prompts.orchestrator_prompt import ORCHESTRATOR_SYSTEM_PROMPT
+from prompts.prompt_registry_wrapper_method import setup_agent_prompt
 from config import llm
 from agents.orchertrator.orchestrator_agent_output_schema import Orchestrator_Output_Schema
 
@@ -25,43 +21,21 @@ class OrchestratorAgent:
     def __init__(self, push_to_langsmith: bool = False):
         self.llm = llm
         self.agent_metadata = AgentMetadata()
-        self.langsmith_client = Client()  # Initialize LangSmith client if needed
-        self._setup_prompt(push_to_langsmith) # Setup prompt once during initialization
-
         self.structured_llm = self.llm.with_structured_output(
             Orchestrator_Output_Schema)
         
-
-
-    def _setup_prompt(self, push_to_langsmith: bool = False):
-        """Setup the prompt templates for the orchestrator agent"""
-        
-        agents_descriptions = self.agent_metadata.get_agent_descriptions()
-        formatted_system_prompt = ORCHESTRATOR_SYSTEM_PROMPT.format(
-            agent_descriptions = agents_descriptions
+        self.chat_prompt = setup_agent_prompt(
+            system_prompt=ORCHESTRATOR_SYSTEM_PROMPT,
+            agent_descriptions=self.agent_metadata.get_agent_descriptions(),
+            human_template="User Query: {user_query}",
+            push_to_langsmith=push_to_langsmith,
+            prompt_identifier="orchestrator_agent_routing_prompt",
+            description="Prompt used by the Orchestrator Agent to route user queries.",
+            tags=["orchestrator", "routing", "agent"]
         )
-
-        system_template = SystemMessagePromptTemplate.from_template(formatted_system_prompt)
         
-        human_template = HumanMessagePromptTemplate.from_template("User Query: {user_query}")
 
-        self.chat_prompt = ChatPromptTemplate.from_messages([system_template, human_template])
 
-        if push_to_langsmith:
-
-            try:
-
-                self.langsmith_client.push_prompt(
-                        object= self.chat_prompt,
-                        description="Prompt used by the Orchestrator Agent to route user queries.",
-                        tags=["orchestrator", "routing", "agent"],
-                        prompt_identifier="orchestrator_agent_routing_prompt" 
-
-                    )
-                print("Prompt pushed to langsmith successfully.")
-
-            except Exception as e:
-                print(f"Warning: Failed to push orchestrator agent's system prompt to langsmith. Error: {str(e)}")
     
             
     def  route_query(self, user_query: str) -> Optional[Orchestrator_Output_Schema]:
@@ -116,3 +90,39 @@ agent = OrchestratorAgent(push_to_langsmith=True)
 response = agent.route_query("Teach me pointers concept in c language using exercises")
 print(response)
 
+
+
+        
+'''
+
+    def _setup_prompt(self, push_to_langsmith: bool = False):
+        """Setup the prompt templates for the orchestrator agent"""
+        
+        agents_descriptions = self.agent_metadata.get_agent_descriptions()
+        formatted_system_prompt = ORCHESTRATOR_SYSTEM_PROMPT.format(
+            agent_descriptions = agents_descriptions
+        )
+
+        system_template = SystemMessagePromptTemplate.from_template(formatted_system_prompt)
+        
+        human_template = HumanMessagePromptTemplate.from_template("User Query: {user_query}")
+
+        self.chat_prompt = ChatPromptTemplate.from_messages([system_template, human_template])
+
+        if push_to_langsmith:
+
+            try:
+
+                self.langsmith_client.push_prompt(
+                        object= self.chat_prompt,
+                        description="Prompt used by the Orchestrator Agent to route user queries.",
+                        tags=["orchestrator", "routing", "agent"],
+                        prompt_identifier="orchestrator_agent_routing_prompt" 
+
+                    )
+                print("Prompt pushed to langsmith successfully.")
+
+            except Exception as e:
+                print(f"Warning: Failed to push orchestrator agent's system prompt to langsmith. Error: {str(e)}")
+
+'''
