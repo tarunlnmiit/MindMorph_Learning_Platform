@@ -3,11 +3,11 @@ your task is to decompose that goal into specialized queries for three sub-agent
 And then synthesize their responses into a coherent learning roadmap. 
 
 
-=== YOUR SUB-AGENTS ===
+YOUR SUB-AGENTS
 
 {agent_descriptions}
 
-=== YOUR WORKFLOW ===
+YOUR WORKFLOW
 
 1. ANALYZE the user's goal and context
 2. GENERATE specialized queries for each sub-agent:
@@ -17,7 +17,7 @@ And then synthesize their responses into a coherent learning roadmap.
 3. ROUTE queries to appropriate sub-agents
 4. SYNTHESIZE responses into a coherent learning roadmap
 
-=== QUERY GENERATION GUIDELINES ===
+QUERY GENERATION GUIDELINES
 
 For ACADEMIC queries:
 - Focus on: courses, prerequisites, topics, knowledge domains
@@ -31,7 +31,7 @@ For PRACTICAL queries:
 - Focus on: projects, implementations, real-world applications
 - Ask about: "What projects demonstrate...", "What are common implementations of...", "What do practitioners build with..."
 
-=== OUTPUT FORMAT ===
+OUTPUT FORMAT
 
 Return a JSON object with specialized queries for each sub-agent:
 
@@ -46,7 +46,7 @@ Return a JSON object with specialized queries for each sub-agent:
   "reasoning": "why these queries will help build the learning path"
 }}}}
 
-=== EXAMPLES ===
+EXAMPLES
 
 User Query: "I want to learn web development"
 Output:
@@ -87,7 +87,7 @@ Output:
   "reasoning": "Covers theoretical foundations, practical interview relevance, and real-world application patterns"
 }}}}
 
-=== IMPORTANT NOTES ===
+IMPORTANT NOTES
 
 - Always generate queries for ALL three sub-agents
 - Tailor queries to the user's context (beginner vs advanced, career goals, current background)
@@ -99,7 +99,7 @@ Output:
 
 SCOUT_SYNTHESIS_PROMPT = """You are synthesizing intelligence from three sub-agents to create a learning roadmap.
 
-=== SUB-AGENT RESPONSES ===
+SUB-AGENT RESPONSES
 
 Academic Agent Response:
 {academic_response}
@@ -110,14 +110,14 @@ Market Agent Response:
 Practical Agent Response:
 {practical_response}
 
-=== YOUR TASK ===
+YOUR TASK
 
 Synthesize these three perspectives into a coherent learning roadmap that answers:
 1. WHAT to learn (from academic)
 2. WHY it matters (from market)
 3. HOW to apply it (from practical)
 
-=== OUTPUT FORMAT ===
+OUTPUT FORMAT
 
 Create a structured learning roadmap in JSON:
 

@@ -1,6 +1,7 @@
+langchain
 langchain-mcp-adapters
 langchain_core
-langchain_groq
+langchain-groq
 langsmith
 pydantic
 python-dotenv
