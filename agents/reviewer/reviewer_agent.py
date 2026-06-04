@@ -1,0 +1,61 @@
+# Reviews a Skill Dependency Graph for coherence, completeness, and fitness.
+
+import sys
+import os
+from typing import Optional
+
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append(PROJECT_ROOT)
+
+from langchain_core.prompts import (
+    ChatPromptTemplate,
+    SystemMessagePromptTemplate,
+    HumanMessagePromptTemplate,
+)
+
+from config import llm
+from prompts.reviewer_prompt import REVIEWER_SYSTEM_PROMPT
+from agents.reviewer.review_schema import ReviewResult
+
+_HUMAN_TEMPLATE = """Learning goal: {user_query}
+
+Proposed Skill Dependency Graph (JSON):
+{skill_graph_json}
+
+Review it."""
+
+
+class ReviewerAgent:
+    '''Checks a Skill Dependency Graph for quality and coherence.'''
+
+    def __init__(self, push_to_langsmith: bool = False):
+        self.llm = llm
+        self.structured_llm = self.llm.with_structured_output(ReviewResult)
+        system_template = SystemMessagePromptTemplate.from_template(REVIEWER_SYSTEM_PROMPT)
+        human_template = HumanMessagePromptTemplate.from_template(_HUMAN_TEMPLATE)
+        self.chat_prompt = ChatPromptTemplate.from_messages([system_template, human_template])
+
+    def review_skill_graph(self, user_query: str, skill_graph_json: str) -> Optional[ReviewResult]:
+        '''Returns a ReviewResult, or None on failure.'''
+        if not user_query or not isinstance(user_query, str):
+            raise ValueError("User query must be a non-empty string")
+
+        print("Reviewer: evaluating skill dependency graph...")
+        try:
+            messages = self.chat_prompt.format_messages(
+                user_query=user_query,
+                skill_graph_json=skill_graph_json,
+            )
+            return self.structured_llm.invoke(messages)
+        except Exception as e:
+            print(f"Error reviewing skill graph: {str(e)}")
+            return None
+
+
+if __name__ == "__main__":
+    agent = ReviewerAgent()
+    r = agent.review_skill_graph(
+        "Learn Python for data science",
+        '{"summary":"x","nodes":[{"id":"python_basics","label":"Python Basics","description":"...","level":"foundational"}],"edges":[]}',
+    )
+    print(r)

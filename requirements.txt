@@ -7,5 +7,6 @@ langsmith
 pydantic
 python-dotenv
 streamlit
+ddgs
 pytest
 pytest-asyncio

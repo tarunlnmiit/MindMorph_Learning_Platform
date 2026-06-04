@@ -38,6 +38,37 @@ def test_academic_import_has_no_side_effects():
     assert "Generating academic roadmap" not in out
 
 
+def test_consensus_import_has_no_side_effects():
+    out = _import_output("agents.consensus.consensus_agent")
+    assert "building skill dependency graph" not in out
+
+
+def test_reviewer_import_has_no_side_effects():
+    out = _import_output("agents.reviewer.reviewer_agent")
+    assert "evaluating skill dependency graph" not in out
+
+
+def test_content_agent_import_has_no_side_effects():
+    out = _import_output("agents.content_generator.content_agent")
+    assert "ContentAgent: Generating" not in out
+    assert "=" * 50 not in out  # the old printed lesson banner
+
+
+def test_factual_import_has_no_side_effects():
+    out = _import_output("agents.factual.factual_agent")
+    assert "searching the web" not in out
+
+
+def test_synthesizer_import_has_no_side_effects():
+    out = _import_output("agents.synthesizer.synthesizer_agent")
+    assert "merging creative draft" not in out
+
+
 def test_graph_module_imports_clean():
     out = _import_output("graph.learning_plan_graph")
     assert "pushed to LangSmith" not in out
+
+
+def test_content_graph_module_imports_clean():
+    out = _import_output("graph.content_graph")
+    assert "ContentAgent: Generating" not in out

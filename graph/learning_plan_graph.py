@@ -1,13 +1,17 @@
-# LangGraph state graph for the Learning-Plan (SCOUT) DAG.
+# Top-level MindMorph LangGraph state graph.
 #
-# Replaces the hardcoded sequential orchestration that used to live inside app.py's
-# Streamlit button handler. The Orchestrator routes; on the SCOUT route the Scout
-# decomposes the goal and three specialist nodes (Academic / Market / Practical) run
-# in parallel, each writing its own state key. CONTENT / EXERCISE routes terminate at a
-# placeholder node until their DAGs are implemented.
+#   START -> orchestrator -> (route)
+#     SCOUT    -> scout -> [academic | market | practical] -> consensus -> reviewer -> END
+#     CONTENT  -> content (dual-path content sub-graph) -> END
+#     EXERCISE -> placeholder -> END   (Exercise DAG is P1, not yet built)
+#
+# The three specialists fan in to Consensus (one superstep join). Consensus emits a
+# Skill Dependency Graph (JSON), the renderer turns it into Mermaid, and Reviewer checks it.
+# Specialist / content nodes write distinct state keys, so fan-out needs no custom reducer.
 
 import sys
 import os
+import json
 from typing import Any, Optional, TypedDict
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -21,19 +25,33 @@ from agents.scout.scout_agent import ScoutAgent
 from agents.academic.academic_agent import AcademicAgent
 from agents.market.market_agent import MarketAnalysisAgent
 from agents.practical.practical_agent import PracticalAgent
+from agents.consensus.consensus_agent import ConsensusAgent
+from agents.reviewer.reviewer_agent import ReviewerAgent
 from tools.github_mcp_client import MCPClientInitialization
+from graph.content_graph import build_content_graph
+from graph.skill_graph_render import skill_graph_to_mermaid
 
 
 class LearningPlanState(TypedDict, total=False):
-    """Shared state. Specialist nodes write distinct keys so the parallel fan-out
-    needs no custom reducer."""
+    """Shared state across both DAGs. Distinct keys per node => no custom reducer needed."""
     user_query: str
+    format_type: str
     route: str
     reasoning: str
+    # Learning-plan branch
     scout_queries: dict
     academic_output: Optional[str]
     market_output: Optional[dict]
     practical_output: Optional[str]
+    skill_graph: Optional[dict]
+    skill_graph_mermaid: Optional[str]
+    review_passed: Optional[bool]
+    review_notes: Optional[str]
+    # Content branch
+    creative_draft: Optional[str]
+    factual_findings: Optional[str]
+    final_content: Optional[str]
+    # Non-SCOUT/CONTENT routes
     placeholder: Optional[str]
 
 
@@ -92,23 +110,37 @@ def build_graph(
     academic: Optional[Any] = None,
     market: Optional[Any] = None,
     practical: Optional[Any] = None,
+    consensus: Optional[Any] = None,
+    reviewer: Optional[Any] = None,
+    content: Optional[Any] = None,
+    factual: Optional[Any] = None,
+    synthesizer: Optional[Any] = None,
 ):
-    """Build and compile the Learning-Plan graph.
+    """Build and compile the full MindMorph graph.
 
-    Agents are injectable so tests can pass mocks; defaults are the real agents.
+    All agents are injectable so tests can pass mocks; defaults are the real agents.
+    The dual-path content sub-graph is built from (content, factual, synthesizer).
     """
     orchestrator = orchestrator or OrchestratorAgent(push_to_langsmith=False)
     scout = scout or ScoutAgent(push_to_langsmith=False, output_variant="Query")
     academic = academic or AcademicAgent(push_to_langsmith=False)
     market = market or MarketAnalysisAgent()
     practical = practical or PracticalAgent(push_to_langsmith=False)
+    consensus = consensus or ConsensusAgent(push_to_langsmith=False)
+    reviewer = reviewer or ReviewerAgent(push_to_langsmith=False)
+    content_graph = build_content_graph(content=content, factual=factual, synthesizer=synthesizer)
 
     def orchestrator_node(state: LearningPlanState) -> dict:
         resp = orchestrator.route_query(state["user_query"])
         return {"route": resp.Assigned_Agent, "reasoning": resp.Reasoning}
 
     def route_condition(state: LearningPlanState) -> str:
-        return "scout" if state.get("route") == "SCOUT" else "placeholder"
+        route = state.get("route")
+        if route == "SCOUT":
+            return "scout"
+        if route == "CONTENT":
+            return "content"
+        return "placeholder"
 
     def scout_node(state: LearningPlanState) -> dict:
         out = scout.generate_specialized_queries(state["user_query"])
@@ -129,6 +161,41 @@ def build_graph(
         resp = practical.provide_practical_advice(query, github_repos=repos)
         return {"practical_output": resp.content if resp else None}
 
+    def consensus_node(state: LearningPlanState) -> dict:
+        market_data = state.get("market_output")
+        market_text = market_data.get("summary") if market_data else None
+        sg = consensus.build_skill_graph(
+            state["user_query"],
+            state.get("academic_output"),
+            market_text,
+            state.get("practical_output"),
+        )
+        if not sg:
+            return {"skill_graph": None, "skill_graph_mermaid": ""}
+        return {
+            "skill_graph": sg.model_dump(),
+            "skill_graph_mermaid": skill_graph_to_mermaid(sg),
+        }
+
+    def reviewer_node(state: LearningPlanState) -> dict:
+        sg = state.get("skill_graph")
+        if not sg:
+            return {"review_passed": False, "review_notes": "No skill graph was produced to review."}
+        res = reviewer.review_skill_graph(state["user_query"], json.dumps(sg))
+        if not res:
+            return {"review_passed": False, "review_notes": "Reviewer failed to evaluate the skill graph."}
+        return {"review_passed": res.passed, "review_notes": res.notes}
+
+    async def content_node(state: LearningPlanState) -> dict:
+        out = await content_graph.ainvoke(
+            {"user_query": state["user_query"], "format_type": state.get("format_type", "B")}
+        )
+        return {
+            "creative_draft": out.get("creative_draft"),
+            "factual_findings": out.get("factual_findings"),
+            "final_content": out.get("final_content"),
+        }
+
     def placeholder_node(state: LearningPlanState) -> dict:
         return {"placeholder": f"Routed to {state.get('route')}. Under development."}
 
@@ -138,21 +205,29 @@ def build_graph(
     g.add_node("academic", academic_node)
     g.add_node("market", market_node)
     g.add_node("practical", practical_node)
+    g.add_node("consensus", consensus_node)
+    g.add_node("reviewer", reviewer_node)
+    g.add_node("content", content_node)
     g.add_node("placeholder", placeholder_node)
 
     g.add_edge(START, "orchestrator")
     g.add_conditional_edges(
         "orchestrator",
         route_condition,
-        {"scout": "scout", "placeholder": "placeholder"},
+        {"scout": "scout", "content": "content", "placeholder": "placeholder"},
     )
-    # Fan out to the three specialists (parallel), each joins to END.
+    # Learning-plan branch: fan out to specialists, fan in to consensus, then review.
     g.add_edge("scout", "academic")
     g.add_edge("scout", "market")
     g.add_edge("scout", "practical")
-    g.add_edge("academic", END)
-    g.add_edge("market", END)
-    g.add_edge("practical", END)
+    g.add_edge("academic", "consensus")
+    g.add_edge("market", "consensus")
+    g.add_edge("practical", "consensus")
+    g.add_edge("consensus", "reviewer")
+    g.add_edge("reviewer", END)
+    # Content branch.
+    g.add_edge("content", END)
+    # Other routes.
     g.add_edge("placeholder", END)
 
     return g.compile()

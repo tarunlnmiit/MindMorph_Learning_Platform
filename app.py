@@ -14,6 +14,20 @@ from agents.market.market_agent import MarketAnalysisAgent
 from agents.practical.practical_agent import PracticalAgent
 from agents.academic.academic_agent import AcademicAgent
 from graph.learning_plan_graph import build_graph
+import streamlit.components.v1 as components
+
+
+def render_mermaid(mermaid_code: str, height: int = 520):
+    """Render a Mermaid diagram by executing mermaid.js in an embedded HTML component.
+    (st.markdown does not run mermaid; a raw ```mermaid block would show as text.)"""
+    html = f"""
+    <div class="mermaid">{mermaid_code}</div>
+    <script type="module">
+      import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+      mermaid.initialize({{ startOnLoad: true, theme: 'neutral' }});
+    </script>
+    """
+    components.html(html, height=height, scrolling=True)
 
 
 # CSS for better styling
@@ -89,15 +103,24 @@ def main():
     if app_mode == "Full Orchestration":
         st.subheader("Generate a Complete Learning Roadmap")
         user_query = st.text_input("What do you want to learn today?", placeholder="e.g., Learn Python for Data Science")
+        fmt_label = st.radio(
+            "Lesson depth (used when the query routes to CONTENT)",
+            ["A — 5-min Boost", "B — 20-min Builder", "C — 2-hour Sprint"],
+            index=1,
+            horizontal=True,
+        )
+        format_type = fmt_label.split(" ")[0]
 
         if st.button("🚀 Generate Learning Path") and user_query:
             with st.status("Orchestrating agents...", expanded=True) as status:
-                st.write("🤖 Running orchestration graph (orchestrate → scout → academic/market/practical)...")
+                st.write("🤖 Running orchestration graph (orchestrate → scout → specialists → consensus → reviewer)...")
                 try:
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
                     final_state = loop.run_until_complete(
-                        st.session_state.graph.ainvoke({"user_query": user_query})
+                        st.session_state.graph.ainvoke(
+                            {"user_query": user_query, "format_type": format_type}
+                        )
                     )
                     loop.close()
                 except Exception as e:
@@ -110,7 +133,28 @@ def main():
                 if route == "SCOUT":
                     status.update(label="✨ Learning Path Generated!", state="complete", expanded=False)
 
-                    # Display Results
+                    # Skill Dependency Graph (Consensus) + Reviewer verdict
+                    st.divider()
+                    st.subheader("🗺️ Skill Dependency Graph")
+                    mermaid = final_state.get("skill_graph_mermaid")
+                    skill_graph = final_state.get("skill_graph")
+                    if mermaid:
+                        render_mermaid(mermaid)
+                        if skill_graph and skill_graph.get("summary"):
+                            st.caption(skill_graph["summary"])
+                        with st.expander("Skill graph (JSON)"):
+                            st.json(skill_graph)
+                    else:
+                        st.warning("Skill graph could not be generated.")
+
+                    review_notes = final_state.get("review_notes")
+                    if review_notes is not None:
+                        passed = final_state.get("review_passed")
+                        badge = "✅ Passed" if passed else "⚠️ Needs work"
+                        st.markdown(f"**Reviewer:** {badge}")
+                        st.info(review_notes)
+
+                    # Specialist findings
                     st.divider()
                     tab1, tab2, tab3 = st.tabs(["📚 Academic Roadmap", "💼 Market Intelligence", "🛠️ Practical Application"])
 
@@ -132,6 +176,18 @@ def main():
                         practical_output = final_state.get("practical_output")
                         if practical_output: st.markdown(practical_output)
                         else: st.warning("Practical advice could not be generated.")
+
+                elif route == "CONTENT":
+                    status.update(label="✨ Lesson Generated!", state="complete", expanded=False)
+                    st.divider()
+                    final_content = final_state.get("final_content")
+                    if final_content:
+                        grounded = bool(final_state.get("factual_findings"))
+                        st.caption("Dual-path: creative draft + " + ("live web grounding" if grounded else "no live grounding (creative only)"))
+                        st.markdown(final_content)
+                    else:
+                        st.warning("Content could not be generated.")
+
                 else:
                     st.info(final_state.get("placeholder", f"Routed to {route}. Under development."))
                     status.update(label="Routing Complete", state="complete")
