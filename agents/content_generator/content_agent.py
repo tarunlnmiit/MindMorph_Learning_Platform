@@ -6,7 +6,6 @@ from typing import Optional
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(PROJECT_ROOT)
 
-from langsmith import Client
 from config import llm
 from langchain_core.prompts import (
     ChatPromptTemplate,
@@ -18,15 +17,15 @@ from agents.content_generator.content_agent_personality import ContentAgentPerso
 
 class ContentAgent:
     """
-    Content Generator Agent that uses the LLM to generate lessons 
+    Content Generator Agent that uses the LLM to generate lessons
     in various formats (Boost, Builder, Sprint).
     """
-    
+
     def __init__(self, push_to_langsmith: bool = False):
         self.llm = llm
         self.personality = ContentAgentPersonality()
-        self.langsmith_client = Client()
-        # Prompt is now dynamic based on format
+        # Prompt is dynamic based on format. LangSmith client is created lazily
+        # only if/when a push is requested (avoids a network client at import time).
         self.push_to_langsmith = push_to_langsmith
 
     def generate_content(self, user_query: str, format_type: str = "C") -> str:
@@ -60,25 +59,10 @@ class ContentAgent:
             return error_msg
 
 # Example usage for interactive testing
-agent = ContentAgent(push_to_langsmith=False)
-
-# print("\n--- MindMorph Content Generator ---")
-# topic = input("Enter Topic: ")
-
-# print("\nSelect Format:")
-# print("A: 5-min Boost (Immediate)")
-# print("B: 20-min Builder (Standard)")
-# print("C: 2-hour Sprint (Deep Dive)")
-
-# fmt_input = input("Choice (A/B/C): ").strip().upper()
-# if fmt_input not in ["A", "B", "C"]:
-#     print("Invalid choice. Defaulting to C (Sprint).")
-#     fmt_input = "C"
-
-# "A: 5-min Boost (Immediate)"
-# "B: 20-min Builder (Standard)"
-# "C: 2-hour Sprint (Deep Dive)"
-lesson = agent.generate_content( "want to learn github" , "B")
-print("\n" + "="*50 + "\n")
-print(lesson)
-print("\n" + "="*50 + "\n")
+if __name__ == "__main__":
+    agent = ContentAgent(push_to_langsmith=False)
+    # Formats: A = 5-min Boost, B = 20-min Builder, C = 2-hour Sprint
+    lesson = agent.generate_content("want to learn github", "B")
+    print("\n" + "="*50 + "\n")
+    print(lesson)
+    print("\n" + "="*50 + "\n")

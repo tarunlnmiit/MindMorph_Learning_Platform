@@ -7,11 +7,11 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 sys.path.append(PROJECT_ROOT)
 
 
-from agents.orchertrator.orchestrator_agents_personality import  AgentMetadata
+from agents.orchestrator.orchestrator_agents_personality import  AgentMetadata
 from prompts.orchestrator_prompt import ORCHESTRATOR_SYSTEM_PROMPT
 from prompts.prompt_registry_wrapper_method import setup_agent_prompt
 from config import llm
-from agents.orchertrator.orchestrator_agent_output_schema import Orchestrator_Output_Schema
+from agents.orchestrator.orchestrator_agent_output_schema import Orchestrator_Output_Schema
 
 
 class OrchestratorAgent:
@@ -86,9 +86,10 @@ class OrchestratorAgent:
 
 
         
-agent = OrchestratorAgent(push_to_langsmith=True)
-response = agent.route_query("Teach me pointers concept in c language using exercises")
-print(response)
+if __name__ == "__main__":
+    agent = OrchestratorAgent(push_to_langsmith=False)
+    response = agent.route_query("Teach me pointers concept in c language using exercises")
+    print(response)
 
 
 

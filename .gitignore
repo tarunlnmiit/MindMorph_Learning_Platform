@@ -6,3 +6,9 @@ __pycache__/
 
 # Source design PDFs (kept local, not committed)
 *.pdf
+
+# graphify generated artifacts (regenerable via `graphify update .`)
+graphify-out/
+
+# Per-developer Claude Code settings
+.claude/settings.local.json

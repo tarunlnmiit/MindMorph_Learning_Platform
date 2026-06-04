@@ -1,4 +1,5 @@
 langchain
+langgraph
 langchain-mcp-adapters
 langchain_core
 langchain-groq
@@ -6,3 +7,6 @@ langsmith
 pydantic
 python-dotenv
 streamlit
+ddgs
+pytest
+pytest-asyncio

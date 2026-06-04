@@ -45,42 +45,71 @@ class JobScraperService:
             print(f"Error initializing MCP client: {e}")
             raise
 
+    # Apify actor name for the LinkedIn job-search actor (as exposed by the MCP server).
+    SEARCH_TOOL_NAME = "fantastic-jobs--advanced-linkedin-job-search-api"
+    OUTPUT_TOOL_NAME = "get-dataset-items"
+
     async def search_jobs(self, query: str, location: str = "United States") -> Optional[str]:
         """
-        Executes the job search tool and returns the Dataset ID.
+        Executes the job search actor and returns the resulting Dataset ID.
+
+        The actor returns a run-summary JSON; the dataset id lives at
+        storages.datasets.default.id (with an itemCount we use to skip empty runs).
         """
         try:
             job_search_tool = next(
                 tool for tool in self.tools
-                if tool.name == "fantastic-jobs-slash-advanced-linkedin-job-search-api"
+                if tool.name == self.SEARCH_TOOL_NAME
             )
-            
+
             print(f"\nSearching for: '{query}' in {location}...")
+            # `limit` must be >= 10 per the actor's input schema.
             results = await job_search_tool.ainvoke({
                 "titleSearch": query,
                 "locationSearch": location,
-                "maxItems": 10
+                "limit": 10
             })
-            
-            dataset_id = None
+
             for item in results:
-                if item['type'] == 'text':
-                    text = item['text']
-                    if 'Dataset ID:' in text:
-                        lines = text.split('\n')
-                        for line in lines:
-                            if 'Dataset ID:' in line:
-                                dataset_id = line.split(':')[1].strip()
-                                break
-            
-            return dataset_id
+                if item.get('type') != 'text':
+                    continue
+                run = self._loads_json_object(item['text'])
+                if not run:
+                    continue
+                default_ds = (
+                    run.get('storages', {})
+                    .get('datasets', {})
+                    .get('default', {})
+                )
+                dataset_id = default_ds.get('id')
+                item_count = default_ds.get('itemCount', 0)
+                if dataset_id:
+                    print(f"Dataset {dataset_id} ready ({item_count} items).")
+                    if not item_count:
+                        # Run succeeded but matched no postings — nothing to fetch.
+                        return None
+                    return dataset_id
+
+            return None
 
         except StopIteration:
-            print("The 'job_search' tool is not available.")
+            print(f"The '{self.SEARCH_TOOL_NAME}' tool is not available.")
             return None
         except Exception as e:
             print(f"Error searching jobs: {e}")
             return None
+
+    @staticmethod
+    def _loads_json_object(text: str) -> Optional[Dict[str, Any]]:
+        """Parse a JSON object from MCP text output, tolerant of surrounding noise."""
+        try:
+            start = text.find('{')
+            end = text.rfind('}') + 1
+            if start != -1 and end != 0:
+                return json.loads(text[start:end], strict=False)
+        except Exception:
+            return None
+        return None
 
     async def fetch_job_results(self, dataset_id: str, limit: int = 10) -> List[Dict[str, Any]]:
         """
@@ -89,9 +118,9 @@ class JobScraperService:
         try:
             get_output_tool = next(
                 tool for tool in self.tools
-                if tool.name == "get-actor-output"
+                if tool.name == self.OUTPUT_TOOL_NAME
             )
-            
+
             print(f"\nRetrieving job results from dataset: {dataset_id}...")
             results = await get_output_tool.ainvoke({
                 "datasetId": dataset_id,
@@ -107,7 +136,7 @@ class JobScraperService:
             return all_jobs
 
         except StopIteration:
-            print("The 'get-actor-output' tool is not available.")
+            print(f"The '{self.OUTPUT_TOOL_NAME}' tool is not available.")
             return []
         except Exception as e:
             print(f"Error retrieving job results: {e}")

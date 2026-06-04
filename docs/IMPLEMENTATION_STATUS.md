@@ -14,7 +14,8 @@
 
 | | Today (as built) | Target (per architecture docs) |
 |---|---|---|
-| **Agent orchestration** | Plain `langchain` agents called sequentially from a Streamlit script | **LangGraph + CrewAI** — LangGraph state-graph/DAG control + CrewAI role-based specialist crews |
+| **Agent orchestration** | **LangGraph** state graph (`graph/learning_plan_graph.py`, `graph/content_graph.py`) — Learning-Plan + Content DAGs. CrewAI deferred (parallel LangGraph nodes used instead) | **LangGraph + CrewAI** — LangGraph state-graph/DAG control + CrewAI role-based specialist crews |
+| **Grounding / web search** | Live DuckDuckGo (`ddgs`) in the Content dual-path Factual agent | RAG pipelines + agentic web search (Playwright/Firecrawl) |
 | **LLM** | Single vendor: Groq `llama-3.3-70b-versatile` (`config.py`) | Multi-vendor **Model Router** (GPT, Claude, Gemini, Bedrock) |
 | **Frontend** | Streamlit (`app.py`) | Next.js 14 / React 18 + JupyterLite |
 | **Backend** | None (logic runs in Streamlit process) | FastAPI microservices + Celery/Redis workers |
@@ -22,9 +23,11 @@
 | **Grounding / RAG** | None | RAG pipelines + agentic web search (Playwright/Firecrawl) |
 | **Observability** | LangSmith hooks (optional) | Prometheus/Grafana/OpenTelemetry + Prompt Registry feedback loop |
 
-The repo is a **working multi-agent prototype** of the orchestration + intelligence concept — it
-proves the routing/decomposition flow end-to-end on one path, but does not yet implement the
-LangGraph+CrewAI orchestration, persistence, RAG, grading, or the full DAGs.
+The repo is a **working multi-agent prototype** with **P0 complete**: the Learning-Plan DAG
+(orchestrate → scout → academic/market/practical → consensus → reviewer → Skill Dependency Graph)
+and the dual-path Content DAG (creative + live web grounding → synthesizer) both run end-to-end on
+LangGraph. Still open: CrewAI (deferred), Exercise DAG + grading, persistence, RAG/Model Router,
+backend, and infra (see roadmap below).
 
 ---
 
@@ -32,24 +35,24 @@ LangGraph+CrewAI orchestration, persistence, RAG, grading, or the full DAGs.
 
 | Agent / Step (target) | Status | Code path | Notes |
 |---|---|---|---|
-| Orchestrator Agent (route SCOUT/CONTENT/EXERCISE) | ✅ | `agents/orchertrator/orchestrator_agent.py` | Structured output (`Orchestrator_Output_Schema`); only the **SCOUT** route is wired in the app — CONTENT/EXERCISE show "Under development" (`app.py:189`). |
+| Orchestrator Agent (route SCOUT/CONTENT/EXERCISE) | ✅ | `agents/orchestrator/orchestrator_agent.py` | Structured output; routes inside the LangGraph graph (`graph/learning_plan_graph.py`). SCOUT + CONTENT wired; EXERCISE → placeholder node. |
 | Scout Agent (decompose → Academic/Market/Practical queries) | ✅ | `agents/scout/scout_agent.py` | Returns `ScoutOutputSchema`; "Query" and "Prompt" variants. |
-| Academic Agent (check university curricula) | 🟡 | inline in `app.py:165` | Not a real agent — a single `llm.invoke("You are an Academic Agent...")` call. No curriculum source, no own module. |
-| Market Agent (scan job postings) | ✅ | `agents/market/market_agent.py` + `tools/job_scrapper_tool.py` | Apify LinkedIn MCP scrape + LLM summarize. App only summarizes the **first** job (`app.py:83`). |
-| Practical Agent (find GitHub projects) | 🟡 | `agents/practical/practical_agent.py` | Works as an LLM advice agent, but does **not** find GitHub projects — the GitHub tool is not wired in. |
-| Consensus Agent (combine findings → skill graph) | ⛔ | — | No skill-graph synthesis; app shows three separate tabs instead. |
-| Reviewer Agent (quality/coherence) | ⛔ | — | Not implemented. |
-| Final Learning Plan (skill dependency graph) | ⛔ | — | No graph artifact; output is three text panels. |
+| Academic Agent (check university curricula) | ✅ | `agents/academic/academic_agent.py` | Real agent + `prompts/academic_prompt.py` (university-curriculum framing). Replaced the old inline `llm.invoke`. |
+| Market Agent (scan job postings) | ✅ | `agents/market/market_agent.py` + `tools/job_scrapper_tool.py` | Apify LinkedIn MCP scrape + LLM summarize; runs as a graph node (degrades to None on empty scrape). |
+| Practical Agent (find GitHub projects) | ✅ | `agents/practical/practical_agent.py` | GitHub MCP wired in (`tools/github_mcp_client.py` `search_github_repositories` now returns results); folded into the practical prompt. |
+| Consensus Agent (combine findings → skill graph) | ✅ | `agents/consensus/consensus_agent.py` | Structured `SkillGraph` (nodes/edges); fan-in node after the three specialists. |
+| Reviewer Agent (quality/coherence) | ✅ | `agents/reviewer/reviewer_agent.py` | Structured `ReviewResult` (passed + notes). No retry loop yet (P0 stopping point). |
+| Final Learning Plan (skill dependency graph) | ✅ | `graph/skill_graph_render.py` | Skill Dependency Graph artifact: JSON + deterministic Mermaid; rendered in the app. |
 
 ## 3. Status by Agent (Content-Generation DAG)
 
 | Step (target) | Status | Code path | Notes |
 |---|---|---|---|
-| Content generator (Boost/Builder/Sprint formats) | 🟡 | `agents/content_generator/content_agent.py` | Generates all 3 formats (A/B/C), but **not wired into the orchestrator/app** — run standalone only. Single-path (creative only). |
-| Creative LLM (engaging draft) | 🟡 | `content_agent.py` | This is the existing single-path generation. |
-| Factual Agents (live web search) | ⛔ | — | No web search / grounding. |
-| Synthesizer (merge creative + factual) | ⛔ | — | No "Master LLM" synth step. |
-| Visual Generator (diagrams) | ⛔ | — | Not implemented. |
+| Content generator (Boost/Builder/Sprint formats) | ✅ | `agents/content_generator/content_agent.py` | All 3 formats (A/B/C); now wired via the CONTENT route into `graph/content_graph.py`. |
+| Creative LLM (engaging draft) | ✅ | `content_agent.py` | Path A of the dual-path content graph. |
+| Factual Agents (live web search) | ✅ | `agents/factual/factual_agent.py` | Path B — live DuckDuckGo search (`ddgs`), degrades to None on failure. |
+| Synthesizer (merge creative + factual) | ✅ | `agents/synthesizer/synthesizer_agent.py` | "Master LLM" merges Path A + B; cites source URLs. Falls back to creative draft if no findings. |
+| Visual Generator (diagrams) | ⛔ | — | Not implemented (later — Content DAG §6.3 tail). |
 | Example Generator (code examples) | ⛔ | — | Not implemented. |
 | Assembler | ⛔ | — | Not implemented. |
 
@@ -57,8 +60,9 @@ LangGraph+CrewAI orchestration, persistence, RAG, grading, or the full DAGs.
 
 | Step (target) | Status | Code path | Notes |
 |---|---|---|---|
-| Format Selector / GitHub / Blog / Dataset agents | ⛔ | — | Entire exercise pipeline unimplemented. EXERCISE route = "Under development" (`app.py:189`). |
-| Synthesizer / Grading Setup (unit tests + rubric) | ⛔ | — | No automated grading. |
+| Format Selector / GitHub / Blog / Dataset agents | ✅ | `agents/exercise/format_selector_agent.py`, `graph/exercise_graph.py` | LangGraph Exercise DAG: format selector → [GitHub MCP \| Blog (ddgs) \| Dataset (ddgs links)] fan-in. EXERCISE route now live (no more placeholder). |
+| Synthesizer / Grading Setup (unit tests + rubric) | ✅ | `agents/exercise/exercise_synthesizer_agent.py`, `agents/exercise/grader_agent.py` | Synthesizer personalizes; Grader emits unit tests (coding) or rubric (case study). |
+| **Live auto-grading** | ✅ | `tools/code_executor.py`, `grader_agent.grade_submission` | Coding → runs submission against tests in an isolated subprocess (self-contained runner, no pytest dep; hang-guard, not a sandbox). Case study → LLM rubric scoring. Wired into `app.py` Grade button. |
 
 ## 5. Status by Architecture Layer
 
@@ -66,7 +70,7 @@ LangGraph+CrewAI orchestration, persistence, RAG, grading, or the full DAGs.
 |---|---|---|
 | Frontend | 🟡 | Streamlit prototype (`app.py`) — not the target Next.js/JupyterLite stack. |
 | Application Service | 🟡 | Agents + LangSmith prompt registry exist; **no** FastAPI, Celery, gateway, rate limiting. |
-| AI / LLM | 🟡 | Single Groq model + plain langchain. **No** LangGraph/CrewAI, Model Router, RAG, or eval pipelines. **Prompt Registry**: ✅ via `prompts/prompt_registry_wrapper_method.py` (LangSmith). |
+| AI / LLM | 🟡 | Single Groq model. **LangGraph** orchestration ✅ (CrewAI deferred). Live web grounding (DuckDuckGo) in Content dual-path. Still **no** Model Router, RAG/vector store, or eval pipelines. **Prompt Registry**: ✅ via `prompts/prompt_registry_wrapper_method.py` (LangSmith). |
 | Data | ⛔ | No PostgreSQL/Redis/S3/Pinecone/Kafka — fully stateless. |
 | Infrastructure | ⛔ | No K8s/Terraform/Prometheus/CI-CD. |
 | Analytics & Continuous Improvement | ⛔ | No telemetry pipeline, warehouse, or human-review loop. |
@@ -79,10 +83,12 @@ LangGraph+CrewAI orchestration, persistence, RAG, grading, or the full DAGs.
 |---|---|---|---|
 | Prompt Registry wrapper (LangSmith) | ✅ | `prompts/prompt_registry_wrapper_method.py` | `setup_agent_prompt()` reused by all agents; optional LangSmith push. |
 | Job scraper tool (Apify MCP) | ✅ | `tools/job_scrapper_tool.py` | `JobScraperService` — LinkedIn search + parse. |
-| GitHub MCP client | 🟡 | `tools/github_mcp_client.py` | Standalone stub (`MCPClientInitialization`) — connects + lists tools + `search_github_repositories`, but **not wired into any agent**. |
+| GitHub MCP client | ✅ | `tools/github_mcp_client.py` | `search_github_repositories` returns results; wired into the Practical node (degrades to None without a token). |
+| Web search (DuckDuckGo) | ✅ | `agents/factual/factual_agent.py` | `ddgs` live search for the Content Factual path. |
+| Skill graph renderer | ✅ | `graph/skill_graph_render.py` | Deterministic SkillGraph JSON → Mermaid. |
 | LLM config | ✅ | `config.py` | Groq `llama-3.3-70b-versatile`, temp 0.1; validates `GROQ_API_KEY`. |
-| Streamlit UI | ✅ | `app.py` | Full Orchestration (SCOUT path) + Individual Agent Test modes. |
-| Tests | ⛔ | — | No test suite. Example calls live at the bottom of agent files. |
+| Streamlit UI | ✅ | `app.py` | Full Orchestration (SCOUT skill-graph + CONTENT dual-path, Mermaid render) + Individual Agent Test. |
+| Tests | 🟡 | `tests/` | 17 pytest tests (graph routing/fan-in, content dual-path, skill-graph render, import guards). Below 80% target. |
 
 ---
 
@@ -90,23 +96,27 @@ LangGraph+CrewAI orchestration, persistence, RAG, grading, or the full DAGs.
 
 Each item notes the **architecture section** it satisfies and the **code gap** it closes.
 
-### P0 — Orchestration foundation (everything else depends on this)
-1. **Migrate to LangGraph + CrewAI.** Replace the sequential Streamlit-driven calls with a LangGraph
-   state graph encoding the DAGs (§6), using CrewAI role-based crews for the parallel specialists
-   (Academic/Market/Practical, Creative/Factual). *Satisfies:* §5.3 AI/LLM Layer. *Closes:* "plain
-   langchain, no orchestration framework."
-2. **Promote Academic & Practical into real agents** (own modules) and **wire the GitHub MCP client**
-   into the Practical agent. *Closes:* `app.py:165` inline academic call; `tools/github_mcp_client.py`
-   stub.
-3. **Add Consensus + Reviewer agents** to complete the Learning-Plan DAG and emit a real
-   **Skill Dependency Graph** artifact. *Satisfies:* §3.1, §6.2. *Closes:* missing consensus/reviewer/graph.
-4. **Wire the Content generator into the orchestrator** and implement **dual-path content** (Creative
-   LLM + Factual web-search agents + Master synthesizer). *Satisfies:* §3.2, §6.3.
+### P0 — Orchestration foundation ✅ COMPLETE
+1. ✅ **Migrated to LangGraph** (CrewAI deferred — parallel LangGraph nodes give the same concurrency
+   for now). State graphs encode the Learning-Plan + Content DAGs (§6): `graph/learning_plan_graph.py`,
+   `graph/content_graph.py`. *Satisfies:* §5.3 AI/LLM Layer.
+2. ✅ **Academic & Practical are real agents**; GitHub MCP client wired into Practical
+   (`agents/academic/`, `tools/github_mcp_client.py` now returns results).
+3. ✅ **Consensus + Reviewer agents** complete the Learning-Plan DAG and emit a real **Skill
+   Dependency Graph** (JSON + Mermaid). *Satisfies:* §3.1, §6.2. Reviewer has no retry loop yet.
+4. ✅ **Content generator wired** via the CONTENT route; **dual-path content** built (Creative LLM +
+   Factual DuckDuckGo agent + Master synthesizer). *Satisfies:* §3.2, §6.3.
+
+> **Deferred from P0:** CrewAI crews (architecture calls for LangGraph **+** CrewAI; revisit when
+> role-based crews add value over plain parallel nodes). Visual/Example/Assembler tail of the
+> Content DAG (§6.3) also still open.
 
 ### P1 — Close the core learning loop
-5. **Exercise pipeline** — Format Selector + GitHub/Blog/Dataset agents + Synthesizer +
-   **Grading Setup** (unit tests for code, LLM rubric for analysis). *Satisfies:* §3.3, §6.4.
-   *Closes:* EXERCISE "Under development".
+5. ✅ **Exercise pipeline** — Format Selector + GitHub/Blog/Dataset agents + Synthesizer +
+   **Grading Setup** (unit tests for code, LLM rubric for analysis) + **live auto-grading**
+   (`tools/code_executor.py`). *Satisfies:* §3.3, §6.4. *Closed:* EXERCISE "Under development".
+   The learn → plan → content → **practice + grade** loop now runs end-to-end on LangGraph.
+   Deferred: containerized grading sandbox (Evaluation Service), real dataset ingestion.
 6. **Persistence + backend** — FastAPI service layer; Pinecone (long-term) + Redis (short-term)
    memory; PostgreSQL for user/progress. *Satisfies:* §5.2, §5.4. *Closes:* stateless prototype.
 7. **RAG + Model Router** — grounding pipelines and multi-vendor routing. *Satisfies:* §5.3, §5.7.
@@ -123,5 +133,6 @@ Each item notes the **architecture section** it satisfies and the **code gap** i
     *Satisfies:* §5.5, §5.6, §5.8.
 
 ### Cross-cutting
-- **Add a test suite** (pytest) — currently zero coverage; agents have only inline example calls.
-- Fix the package-name typo `agents/orchertrator/` → `agents/orchestrator/` during the P0 refactor.
+- 🟡 **Test suite** — pytest started (`tests/`, 17 tests: graph routing/fan-in, content dual-path,
+  skill-graph render, import side-effect guards). Still well below the 80% target.
+- ✅ Fixed the package-name typo `agents/orchertrator/` → `agents/orchestrator/`.
