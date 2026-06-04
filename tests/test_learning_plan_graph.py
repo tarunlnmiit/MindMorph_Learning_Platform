@@ -123,17 +123,46 @@ async def test_content_route_runs_dual_path():
     synthesizer.synthesize.assert_called_once_with("Python lists", "CREATIVE_DRAFT", "FACTUAL_FINDINGS")
 
 
-async def test_exercise_route_hits_placeholder():
+async def test_exercise_route_runs_exercise_subgraph(monkeypatch):
+    # Neutralize the exercise sub-graph's live I/O: GitHub MCP + the FactualAgent (ddgs) blog/dataset
+    # sources default to real network calls, which tests must not make.
+    monkeypatch.setattr(glp, "_fetch_github_repos", AsyncMock(return_value=None))
+    from agents.factual.factual_agent import FactualAgent
+    monkeypatch.setattr(FactualAgent, "gather_facts", lambda self, query: None)
+
     orchestrator = MagicMock()
     orchestrator.route_query.return_value = MagicMock(Assigned_Agent="EXERCISE", Reasoning="r")
     scout = MagicMock()
     consensus = MagicMock()
 
-    graph = build_graph(orchestrator=orchestrator, scout=scout, consensus=consensus)
+    format_selector = MagicMock()
+    format_selector.select_format.return_value = MagicMock(format="coding_challenge", reasoning="r")
+    exercise_synthesizer = MagicMock()
+    exercise_synthesizer.synthesize.return_value = "EXERCISE_STATEMENT"
+    grader = MagicMock()
+    artifact = MagicMock()
+    artifact.model_dump.return_value = {
+        "format": "coding_challenge",
+        "unit_tests": ["def test_x(): assert True"],
+        "rubric": [],
+        "instructions": "submit",
+    }
+    grader.build_grading_artifact.return_value = artifact
+
+    graph = build_graph(
+        orchestrator=orchestrator,
+        scout=scout,
+        consensus=consensus,
+        format_selector=format_selector,
+        exercise_synthesizer=exercise_synthesizer,
+        grader=grader,
+    )
     state = await graph.ainvoke({"user_query": "give me practice"})
 
     assert state["route"] == "EXERCISE"
-    assert "Under development" in state["placeholder"]
+    assert state["exercise_format"] == "coding_challenge"
+    assert state["exercise_statement"] == "EXERCISE_STATEMENT"
+    assert state["grading_artifact"]["unit_tests"]
     scout.generate_specialized_queries.assert_not_called()
     consensus.build_skill_graph.assert_not_called()
     assert "skill_graph" not in state

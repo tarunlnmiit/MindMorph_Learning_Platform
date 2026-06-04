@@ -29,6 +29,7 @@ from agents.consensus.consensus_agent import ConsensusAgent
 from agents.reviewer.reviewer_agent import ReviewerAgent
 from tools.github_mcp_client import MCPClientInitialization
 from graph.content_graph import build_content_graph
+from graph.exercise_graph import build_exercise_graph
 from graph.skill_graph_render import skill_graph_to_mermaid
 
 
@@ -51,7 +52,11 @@ class LearningPlanState(TypedDict, total=False):
     creative_draft: Optional[str]
     factual_findings: Optional[str]
     final_content: Optional[str]
-    # Non-SCOUT/CONTENT routes
+    # Exercise branch
+    exercise_format: Optional[str]
+    exercise_statement: Optional[str]
+    grading_artifact: Optional[dict]
+    # Non-SCOUT/CONTENT/EXERCISE routes
     placeholder: Optional[str]
 
 
@@ -120,11 +125,15 @@ def build_graph(
     content: Optional[Any] = None,
     factual: Optional[Any] = None,
     synthesizer: Optional[Any] = None,
+    format_selector: Optional[Any] = None,
+    exercise_synthesizer: Optional[Any] = None,
+    grader: Optional[Any] = None,
 ):
     """Build and compile the full MindMorph graph.
 
     All agents are injectable so tests can pass mocks; defaults are the real agents.
-    The dual-path content sub-graph is built from (content, factual, synthesizer).
+    The dual-path content sub-graph is built from (content, factual, synthesizer); the
+    exercise sub-graph from (format_selector, exercise_synthesizer, grader).
     """
     orchestrator = orchestrator or OrchestratorAgent(push_to_langsmith=False)
     scout = scout or ScoutAgent(push_to_langsmith=False, output_variant="Query")
@@ -134,6 +143,11 @@ def build_graph(
     consensus = consensus or ConsensusAgent(push_to_langsmith=False)
     reviewer = reviewer or ReviewerAgent(push_to_langsmith=False)
     content_graph = build_content_graph(content=content, factual=factual, synthesizer=synthesizer)
+    exercise_graph = build_exercise_graph(
+        format_selector=format_selector,
+        synthesizer=exercise_synthesizer,
+        grader=grader,
+    )
 
     def orchestrator_node(state: LearningPlanState) -> dict:
         resp = orchestrator.route_query(state["user_query"])
@@ -145,6 +159,8 @@ def build_graph(
             return "scout"
         if route == "CONTENT":
             return "content"
+        if route == "EXERCISE":
+            return "exercise"
         return "placeholder"
 
     def scout_node(state: LearningPlanState) -> dict:
@@ -201,6 +217,14 @@ def build_graph(
             "final_content": out.get("final_content"),
         }
 
+    async def exercise_node(state: LearningPlanState) -> dict:
+        out = await exercise_graph.ainvoke({"user_query": state["user_query"]})
+        return {
+            "exercise_format": out.get("exercise_format"),
+            "exercise_statement": out.get("exercise_statement"),
+            "grading_artifact": out.get("grading_artifact"),
+        }
+
     def placeholder_node(state: LearningPlanState) -> dict:
         return {"placeholder": f"Routed to {state.get('route')}. Under development."}
 
@@ -213,13 +237,14 @@ def build_graph(
     g.add_node("consensus", consensus_node)
     g.add_node("reviewer", reviewer_node)
     g.add_node("content", content_node)
+    g.add_node("exercise", exercise_node)
     g.add_node("placeholder", placeholder_node)
 
     g.add_edge(START, "orchestrator")
     g.add_conditional_edges(
         "orchestrator",
         route_condition,
-        {"scout": "scout", "content": "content", "placeholder": "placeholder"},
+        {"scout": "scout", "content": "content", "exercise": "exercise", "placeholder": "placeholder"},
     )
     # Learning-plan branch: fan out to specialists, fan in to consensus, then review.
     g.add_edge("scout", "academic")
@@ -232,6 +257,8 @@ def build_graph(
     g.add_edge("reviewer", END)
     # Content branch.
     g.add_edge("content", END)
+    # Exercise branch.
+    g.add_edge("exercise", END)
     # Other routes.
     g.add_edge("placeholder", END)
 

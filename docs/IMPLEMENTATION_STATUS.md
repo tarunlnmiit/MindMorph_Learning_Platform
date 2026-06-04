@@ -60,8 +60,9 @@ backend, and infra (see roadmap below).
 
 | Step (target) | Status | Code path | Notes |
 |---|---|---|---|
-| Format Selector / GitHub / Blog / Dataset agents | ⛔ | — | Entire exercise pipeline unimplemented. EXERCISE route = "Under development" (`app.py:189`). |
-| Synthesizer / Grading Setup (unit tests + rubric) | ⛔ | — | No automated grading. |
+| Format Selector / GitHub / Blog / Dataset agents | ✅ | `agents/exercise/format_selector_agent.py`, `graph/exercise_graph.py` | LangGraph Exercise DAG: format selector → [GitHub MCP \| Blog (ddgs) \| Dataset (ddgs links)] fan-in. EXERCISE route now live (no more placeholder). |
+| Synthesizer / Grading Setup (unit tests + rubric) | ✅ | `agents/exercise/exercise_synthesizer_agent.py`, `agents/exercise/grader_agent.py` | Synthesizer personalizes; Grader emits unit tests (coding) or rubric (case study). |
+| **Live auto-grading** | ✅ | `tools/code_executor.py`, `grader_agent.grade_submission` | Coding → runs submission against tests in an isolated subprocess (self-contained runner, no pytest dep; hang-guard, not a sandbox). Case study → LLM rubric scoring. Wired into `app.py` Grade button. |
 
 ## 5. Status by Architecture Layer
 
@@ -111,9 +112,11 @@ Each item notes the **architecture section** it satisfies and the **code gap** i
 > Content DAG (§6.3) also still open.
 
 ### P1 — Close the core learning loop
-5. **Exercise pipeline** — Format Selector + GitHub/Blog/Dataset agents + Synthesizer +
-   **Grading Setup** (unit tests for code, LLM rubric for analysis). *Satisfies:* §3.3, §6.4.
-   *Closes:* EXERCISE "Under development".
+5. ✅ **Exercise pipeline** — Format Selector + GitHub/Blog/Dataset agents + Synthesizer +
+   **Grading Setup** (unit tests for code, LLM rubric for analysis) + **live auto-grading**
+   (`tools/code_executor.py`). *Satisfies:* §3.3, §6.4. *Closed:* EXERCISE "Under development".
+   The learn → plan → content → **practice + grade** loop now runs end-to-end on LangGraph.
+   Deferred: containerized grading sandbox (Evaluation Service), real dataset ingestion.
 6. **Persistence + backend** — FastAPI service layer; Pinecone (long-term) + Redis (short-term)
    memory; PostgreSQL for user/progress. *Satisfies:* §5.2, §5.4. *Closes:* stateless prototype.
 7. **RAG + Model Router** — grounding pipelines and multi-vendor routing. *Satisfies:* §5.3, §5.7.

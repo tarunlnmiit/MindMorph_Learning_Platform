@@ -64,6 +64,27 @@ def test_synthesizer_import_has_no_side_effects():
     assert "merging creative draft" not in out
 
 
+def test_format_selector_import_has_no_side_effects():
+    out = _import_output("agents.exercise.format_selector_agent")
+    assert "choosing exercise format" not in out
+
+
+def test_exercise_synthesizer_import_has_no_side_effects():
+    out = _import_output("agents.exercise.exercise_synthesizer_agent")
+    assert "composing personalized exercise" not in out
+
+
+def test_grader_import_has_no_side_effects():
+    out = _import_output("agents.exercise.grader_agent")
+    assert "building grading harness" not in out
+
+
+def test_code_executor_import_has_no_side_effects():
+    # Importing the executor must not execute any code.
+    out = _import_output("tools.code_executor")
+    assert "Executing" not in out
+
+
 def test_graph_module_imports_clean():
     out = _import_output("graph.learning_plan_graph")
     assert "pushed to LangSmith" not in out
@@ -72,3 +93,8 @@ def test_graph_module_imports_clean():
 def test_content_graph_module_imports_clean():
     out = _import_output("graph.content_graph")
     assert "ContentAgent: Generating" not in out
+
+
+def test_exercise_graph_module_imports_clean():
+    out = _import_output("graph.exercise_graph")
+    assert "choosing exercise format" not in out

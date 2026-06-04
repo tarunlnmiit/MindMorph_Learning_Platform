@@ -1,0 +1,128 @@
+# LangGraph Exercise-Generation DAG (architecture §6.4).
+#
+#   START --> format_selector
+#   format_selector --> github   (Path 1: code repos)
+#   format_selector --> blog     (Path 2: tutorials)
+#   format_selector --> dataset  (Path 3: real datasets)
+#   github, blog, dataset --> synthesizer (personalize to goal) --> grader (build grading harness) --> END
+#
+# The three source nodes write distinct state keys, so the parallel fan-out needs no reducer
+# (same shape as the dual-path content graph). Live execution / grading of a submitted solution is
+# NOT part of this graph — it is a separate step (tools/code_executor.py) fired from the UI.
+
+import sys
+import os
+from typing import Any, Optional, TypedDict
+
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_ROOT not in sys.path:
+    sys.path.append(PROJECT_ROOT)
+
+from langgraph.graph import StateGraph, START, END
+
+from agents.exercise.format_selector_agent import FormatSelectorAgent
+from agents.exercise.exercise_synthesizer_agent import ExerciseSynthesizerAgent
+from agents.exercise.grader_agent import GraderAgent
+from agents.factual.factual_agent import FactualAgent
+
+
+class ExerciseState(TypedDict, total=False):
+    user_query: str
+    exercise_format: str          # 'coding_challenge' | 'case_study'
+    format_reasoning: Optional[str]
+    github_material: Optional[str]
+    blog_material: Optional[str]
+    dataset_material: Optional[str]
+    exercise_statement: Optional[str]
+    grading_artifact: Optional[dict]
+
+
+def build_exercise_graph(
+    format_selector: Optional[Any] = None,
+    synthesizer: Optional[Any] = None,
+    grader: Optional[Any] = None,
+    github: Optional[Any] = None,
+    blog: Optional[Any] = None,
+    dataset: Optional[Any] = None,
+):
+    """Build and compile the Exercise-Generation graph. Agents are injectable for tests.
+
+    `github` is an awaitable callable `query -> material|None` (defaults to the resilient GitHub MCP
+    lookup). `blog` / `dataset` default to a FactualAgent (live web search via ddgs).
+    """
+    format_selector = format_selector or FormatSelectorAgent(push_to_langsmith=False)
+    synthesizer = synthesizer or ExerciseSynthesizerAgent(push_to_langsmith=False)
+    grader = grader or GraderAgent(push_to_langsmith=False)
+    blog = blog or FactualAgent()
+    dataset = dataset or FactualAgent()
+    if github is None:
+        # Reuse the resilient GitHub MCP helper from the learning-plan graph (returns None w/o token).
+        from graph.learning_plan_graph import _fetch_github_repos
+        github = _fetch_github_repos
+
+    def _material_to_text(material: Any) -> Optional[str]:
+        if material is None:
+            return None
+        return material if isinstance(material, str) else str(material)
+
+    def format_selector_node(state: ExerciseState) -> dict:
+        result = format_selector.select_format(state["user_query"])
+        if not result:
+            # Degrade to a coding challenge by default so the pipeline still produces an exercise.
+            return {"exercise_format": "coding_challenge", "format_reasoning": None}
+        return {"exercise_format": result.format, "format_reasoning": result.reasoning}
+
+    async def github_node(state: ExerciseState) -> dict:
+        query = f"{state['user_query']} example projects"
+        try:
+            material = await github(query)
+        except Exception as e:
+            print(f"Exercise GitHub node error: {e}")
+            material = None
+        return {"github_material": _material_to_text(material)}
+
+    def blog_node(state: ExerciseState) -> dict:
+        query = f"best tutorials and guides for {state['user_query']}"
+        return {"blog_material": blog.gather_facts(query)}
+
+    def dataset_node(state: ExerciseState) -> dict:
+        query = f"public dataset Kaggle HuggingFace for {state['user_query']}"
+        return {"dataset_material": dataset.gather_facts(query)}
+
+    def synthesizer_node(state: ExerciseState) -> dict:
+        statement = synthesizer.synthesize(
+            state["user_query"],
+            state.get("exercise_format", "coding_challenge"),
+            github_material=state.get("github_material"),
+            blog_material=state.get("blog_material"),
+            dataset_material=state.get("dataset_material"),
+        )
+        return {"exercise_statement": statement}
+
+    def grader_node(state: ExerciseState) -> dict:
+        artifact = grader.build_grading_artifact(
+            state["user_query"],
+            state.get("exercise_format", "coding_challenge"),
+            state.get("exercise_statement") or "",
+        )
+        return {"grading_artifact": artifact.model_dump() if artifact else None}
+
+    g = StateGraph(ExerciseState)
+    g.add_node("format_selector", format_selector_node)
+    g.add_node("github", github_node)
+    g.add_node("blog", blog_node)
+    g.add_node("dataset", dataset_node)
+    g.add_node("synthesizer", synthesizer_node)
+    g.add_node("grader", grader_node)
+
+    g.add_edge(START, "format_selector")
+    g.add_edge("format_selector", "github")
+    g.add_edge("format_selector", "blog")
+    g.add_edge("format_selector", "dataset")
+    g.add_edge("github", "synthesizer")
+    g.add_edge("blog", "synthesizer")
+    g.add_edge("dataset", "synthesizer")
+    g.add_edge("synthesizer", "grader")
+    g.add_edge("grader", END)
+
+    return g.compile()

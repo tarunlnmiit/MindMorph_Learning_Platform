@@ -30,6 +30,73 @@ def render_mermaid(mermaid_code: str, height: int = 520):
     components.html(html, height=height, scrolling=True)
 
 
+def render_exercise(exercise: dict):
+    """Render a generated exercise + its grading harness, plus a submit-and-grade panel.
+
+    Grading runs the learner's submission live: coding_challenge -> unit tests in a sandboxed
+    subprocess; case_study -> LLM rubric scoring.
+    """
+    fmt = exercise.get("format") or "coding_challenge"
+    artifact = exercise.get("grading_artifact") or {}
+
+    st.subheader("🏋️ Practice Exercise")
+    st.caption(f"Format: **{fmt}**")
+    st.markdown(exercise.get("statement", ""))
+
+    with st.expander("Grading harness", expanded=False):
+        if artifact.get("instructions"):
+            st.markdown(f"**Instructions:** {artifact['instructions']}")
+        if fmt == "coding_challenge":
+            tests = artifact.get("unit_tests") or []
+            st.caption(f"{len(tests)} unit test(s) will run against your solution.")
+            for i, t in enumerate(tests, 1):
+                st.code(t, language="python")
+        else:
+            rubric = artifact.get("rubric") or []
+            if rubric:
+                st.table([{"Criterion": c.get("criterion"), "Weight": c.get("weight")} for c in rubric])
+
+    st.divider()
+    is_code = fmt == "coding_challenge"
+    label = "Your solution (Python module defining the required name)" if is_code else "Your analysis"
+    solution = st.text_area(label, height=220, key="exercise_solution")
+
+    if st.button("Grade my submission", type="primary"):
+        if not solution.strip():
+            st.warning("Enter a solution first.")
+        else:
+            with st.spinner("Grading..."):
+                # Imported lazily: keeps app import clean and isolates the code-execution surface.
+                from agents.exercise.grader_agent import grade_submission
+                result = grade_submission(fmt, solution, artifact)
+            _render_grade_result(fmt, result)
+
+
+def _render_grade_result(fmt: str, result):
+    if result is None:
+        st.error("Grading failed.")
+        return
+    if fmt == "coding_challenge":
+        passed, total = result.get("passed", 0), result.get("total", 0)
+        score = result.get("score", 0.0)
+        (st.success if passed == total and total > 0 else st.error)(
+            f"{passed}/{total} tests passed — score {score:.0f}%"
+        )
+        if result.get("timed_out"):
+            st.warning("Execution timed out (possible infinite loop).")
+        for f in result.get("failures", []):
+            st.code(f, language="text")
+        if result.get("stdout"):
+            with st.expander("Test output"):
+                st.code(result["stdout"], language="text")
+    else:
+        st.success(f"Score: {result.get('score', 0):.0f}%")
+        for line in result.get("per_criterion", []):
+            st.markdown(f"- {line}")
+        if result.get("feedback"):
+            st.markdown(f"**Feedback:** {result['feedback']}")
+
+
 # CSS for better styling
 st.markdown("""
 <style>
@@ -188,9 +255,31 @@ def main():
                     else:
                         st.warning("Content could not be generated.")
 
+                elif route == "EXERCISE":
+                    status.update(label="🏋️ Exercise Generated!", state="complete", expanded=False)
+                    st.divider()
+                    statement = final_state.get("exercise_statement")
+                    if statement:
+                        # Persist so the grading step survives Streamlit reruns (Phase B).
+                        st.session_state.exercise = {
+                            "format": final_state.get("exercise_format"),
+                            "statement": statement,
+                            "grading_artifact": final_state.get("grading_artifact"),
+                        }
+                    else:
+                        status.update(label="Exercise generation incomplete", state="error")
+                        st.warning(
+                            "A generation step returned nothing — usually a transient LLM hiccup. "
+                            "Click **🚀 Generate Learning Path** again to retry."
+                        )
+
                 else:
                     st.info(final_state.get("placeholder", f"Routed to {route}. Under development."))
                     status.update(label="Routing Complete", state="complete")
+
+        # Exercise + grading panel (outside the spinner; persists across reruns for the Grade action).
+        if st.session_state.get("exercise"):
+            render_exercise(st.session_state.exercise)
 
     else: # Individual Agent Test Mode
         st.subheader("Test Individual Agents")
