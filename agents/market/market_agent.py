@@ -69,6 +69,27 @@ class MarketAnalysisAgent:
             print(f"Error summarizing with LLM: {e}")
             return None
 
+    async def extract_job_title(self, query: str) -> str:
+        """Distill a learning goal / Scout question into a concise job title.
+
+        The LinkedIn actor's `titleSearch` matches job titles, so a verbose question
+        (e.g. "What Python skills are in demand?") returns zero results. We reduce it
+        to a 2-4 word role title (e.g. "machine learning engineer").
+        """
+        prompt = (
+            "Extract the single most relevant job title (2-4 words) to search a job board, "
+            "based on the request below. Reply with ONLY the title text - no quotes, no punctuation, "
+            "no explanation.\n\n"
+            f"Request: {query}"
+        )
+        try:
+            resp = await self.llm.ainvoke(prompt)
+            title = (resp.content or "").strip().strip('"').splitlines()[0].strip()
+            return title or query
+        except Exception as e:
+            print(f"Job-title extraction failed, using raw query: {e}")
+            return query
+
     async def run_analysis(self, search_query: str, location: str):
         # 1. Initialize Scraper
         await self.scraper.initialize()

@@ -26,6 +26,7 @@ def _mock_scout():
 
 def _mock_market():
     market = MagicMock()
+    market.extract_job_title = AsyncMock(return_value="ML Engineer")
     market.scraper.initialize = AsyncMock()
     market.scraper.search_jobs = AsyncMock(return_value="dataset123")
     market.scraper.fetch_job_results = AsyncMock(

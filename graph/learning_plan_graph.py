@@ -73,10 +73,15 @@ def _normalize_scout_queries(scout_output: Any) -> dict:
 
 
 async def _run_market(market_agent: Any, query: str, location: str = "United States") -> Optional[dict]:
-    """Port of app.py's run_market_analysis helper (the agent's own run_analysis only prints)."""
+    """Port of app.py's run_market_analysis helper (the agent's own run_analysis only prints).
+
+    The Scout MARKET query is a natural-language question; the job actor needs a concise
+    role title, so we distill one before searching.
+    """
     try:
         await market_agent.scraper.initialize()
-        dataset_id = await market_agent.scraper.search_jobs(query, location)
+        job_title = await market_agent.extract_job_title(query)
+        dataset_id = await market_agent.scraper.search_jobs(job_title, location)
         if not dataset_id:
             return None
         jobs = await market_agent.scraper.fetch_job_results(dataset_id)
