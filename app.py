@@ -1,5 +1,6 @@
 import streamlit as st
 import asyncio
+import logging
 import os
 import sys
 
@@ -8,18 +9,30 @@ PROJECT_ROOT = os.path.abspath(os.path.dirname(__file__))
 if PROJECT_ROOT not in sys.path:
     sys.path.append(PROJECT_ROOT)
 
+from logging_config import setup_logging
+
+setup_logging()  # configure root logging once, before any agent logs fire
+logger = logging.getLogger(__name__)
+
 from agents.orchestrator.orchestrator_agent import OrchestratorAgent
 from agents.scout.scout_agent import ScoutAgent
 from agents.market.market_agent import MarketAnalysisAgent
 from agents.practical.practical_agent import PracticalAgent
 from agents.academic.academic_agent import AcademicAgent
 from graph.learning_plan_graph import build_graph
-import streamlit.components.v1 as components
+from graph.lesson_graph import build_lesson_graph
+from graph.skill_graph_render import skill_graph_to_mermaid
+from streamlit_ace import st_ace
+
+# Mastery thresholds (Phase 2): score → node status.
+MASTERY_THRESHOLD = 80   # >= mastered
+REVIEW_THRESHOLD = 50    # >= in_progress, below ⇒ needs_review
 
 
 def render_mermaid(mermaid_code: str, height: int = 520):
-    """Render a Mermaid diagram by executing mermaid.js in an embedded HTML component.
-    (st.markdown does not run mermaid; a raw ```mermaid block would show as text.)"""
+    """Render a Mermaid diagram by executing mermaid.js in an embedded iframe.
+    (st.markdown does not run mermaid; a raw ```mermaid block would show as text.
+    st.html strips <script>, so the raw-HTML iframe is required to run mermaid.js.)"""
     html = f"""
     <div class="mermaid">{mermaid_code}</div>
     <script type="module">
@@ -27,15 +40,25 @@ def render_mermaid(mermaid_code: str, height: int = 520):
       mermaid.initialize({{ startOnLoad: true, theme: 'neutral' }});
     </script>
     """
-    components.html(html, height=height, scrolling=True)
+    # st.iframe auto-detects a raw HTML string and embeds it (runs JS), replacing the
+    # deprecated st.components.v1.html (removed in a future Streamlit release).
+    st.iframe(html, height=height)
 
 
-def render_exercise(exercise: dict):
+def render_exercise(exercise: dict, node_id: str | None = None, learning_session: dict | None = None):
     """Render a generated exercise + its grading harness, plus a submit-and-grade panel.
 
     Grading runs the learner's submission live: coding_challenge -> unit tests in a sandboxed
     subprocess; case_study -> LLM rubric scoring.
+
+    Lesson path (node_id + learning_session given): the grade updates per-node mastery and the
+    result is persisted in node_state['last_feedback'] so it survives the post-grade st.rerun()
+    that re-colors the graph. Standalone EXERCISE route (node_id=None): transient render, no rerun.
     """
+    is_lesson = node_id is not None and learning_session is not None
+    # Per-node widget keys: Streamlit keys widget state globally, so a constant key would carry one
+    # node's solution into another's editor and grade the wrong code into node_state. Scope by node.
+    key_suffix = node_id or "standalone"
     fmt = exercise.get("format") or "coding_challenge"
     artifact = exercise.get("grading_artifact") or {}
 
@@ -58,18 +81,46 @@ def render_exercise(exercise: dict):
 
     st.divider()
     is_code = fmt == "coding_challenge"
-    label = "Your solution (Python module defining the required name)" if is_code else "Your analysis"
-    solution = st.text_area(label, height=220, key="exercise_solution")
+    if is_code:
+        # Real in-browser code editor (Ace): syntax highlight, indent, line numbers. Returns the
+        # code string straight to Python, so server-side hardened-sandbox grading is unchanged.
+        st.caption("Your solution (Python module defining the required name)")
+        solution = st_ace(
+            language="python",
+            theme="monokai",
+            height=280,
+            font_size=14,
+            tab_size=4,
+            show_gutter=True,
+            auto_update=True,  # return edits without an explicit save keystroke
+            placeholder="# Write your solution here",
+            key=f"exercise_solution_ace_{key_suffix}",
+        )
+    else:
+        solution = st.text_area("Your analysis", height=220, key=f"exercise_solution_{key_suffix}")
 
-    if st.button("Grade my submission", type="primary"):
-        if not solution.strip():
+    if st.button("Grade my submission", type="primary", key=f"grade_btn_{key_suffix}"):
+        if not (solution or "").strip():
             st.warning("Enter a solution first.")
         else:
+            logger.info("UI: grading %s submission", fmt)
             with st.spinner("Grading..."):
                 # Imported lazily: keeps app import clean and isolates the code-execution surface.
                 from agents.exercise.grader_agent import grade_submission
                 result = grade_submission(fmt, solution, artifact)
-            _render_grade_result(fmt, result)
+            if is_lesson and result is not None:
+                # Capture mastery, then rerun so the graph re-colors + progress updates; the
+                # persisted last_feedback (rendered below) makes the result reappear after rerun.
+                _apply_score(learning_session, node_id, fmt, result)
+                st.rerun()
+            else:
+                _render_grade_result(fmt, result)
+
+    # Lesson path: re-render the last grade result from state (survives the post-grade rerun).
+    if is_lesson:
+        prior = learning_session["node_state"].get(node_id, {}).get("last_feedback")
+        if prior is not None:
+            _render_grade_result(fmt, prior)
 
 
 def _render_grade_result(fmt: str, result):
@@ -95,6 +146,33 @@ def _render_grade_result(fmt: str, result):
             st.markdown(f"- {line}")
         if result.get("feedback"):
             st.markdown(f"**Feedback:** {result['feedback']}")
+
+
+def _apply_score(ls: dict, node_id: str, fmt: str, result: dict) -> None:
+    """Phase 2 — write a grade result into learning_session['node_state'][node_id].
+
+    Pure state update (builds a new node_state entry, no Streamlit calls) so it's unit-testable
+    without a Streamlit context. Both coding_challenge and case_study expose 'score' (0–100).
+    """
+    score = float(result.get("score", 0.0) or 0.0)
+    old = ls["node_state"].get(node_id, {})
+    best_score = max(old.get("best_score", 0), score)
+    # Mastery is sticky: once best_score clears the bar the node stays mastered even after a worse
+    # retry. in_progress/needs_review track the latest attempt so genuine struggle still surfaces.
+    if best_score >= MASTERY_THRESHOLD:
+        status = "mastered"
+    elif score >= REVIEW_THRESHOLD:
+        status = "in_progress"
+    else:
+        status = "needs_review"
+    ls["node_state"][node_id] = {
+        **old,
+        "status": status,
+        "best_score": best_score,
+        "attempts": old.get("attempts", 0) + 1,
+        "weaknesses": old.get("weaknesses", []),  # Phase 3 fills remediation_focus
+        "last_feedback": result,
+    }
 
 
 # CSS for better styling
@@ -137,6 +215,9 @@ def initialize_agents():
             market=st.session_state.market,
             practical=st.session_state.practical,
         )
+    if 'lesson_graph' not in st.session_state:
+        # Composes the content + exercise sub-graphs; one click = one lesson for a skill node.
+        st.session_state.lesson_graph = build_lesson_graph()
 
 async def run_market_analysis(query: str, location: str = "United States"):
     """Helper to run async market analysis"""
@@ -149,6 +230,138 @@ async def run_market_analysis(query: str, location: str = "United States"):
             summary = await agent.summarize_job(jobs[0])
             return {"job": jobs[0], "summary": summary}
     return None
+
+
+def _node_label_map(skill_graph: dict) -> dict:
+    """Map node_id -> label for the skill picker (ids are unique; labels may repeat)."""
+    return {n["id"]: n.get("label", n["id"]) for n in skill_graph.get("nodes", [])}
+
+
+def run_lesson(node: dict, format_type: str, prior_weaknesses: list):
+    """Run the lesson graph for one clicked skill node (content + exercise). Sync wrapper."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(
+            st.session_state.lesson_graph.ainvoke(
+                {
+                    "skill_label": node.get("label", ""),
+                    "skill_description": node.get("description", ""),
+                    "format_type": format_type,
+                    "prior_weaknesses": prior_weaknesses,
+                }
+            )
+        )
+    finally:
+        loop.close()
+
+
+def render_learning_session():
+    """Render the interactive SCOUT result: skill graph + node picker + composed lesson.
+
+    Persists across Streamlit reruns via st.session_state.learning_session, so the selectbox
+    and Open-lesson interactions survive without re-running the orchestration graph.
+    """
+    ls = st.session_state.learning_session
+    skill_graph = ls["skill_graph"]
+    nodes = skill_graph.get("nodes", [])
+    if not nodes:
+        st.warning("Skill graph could not be generated.")
+        return
+
+    node_state = ls["node_state"]
+    mastered = sum(1 for s in node_state.values() if s.get("status") == "mastered")
+
+    st.divider()
+    st.subheader(f"🎯 {mastered} / {len(nodes)} skills mastered")
+    # Live recompute with the mastery overlay (deterministic, no LLM cost) so node colors/glyphs
+    # reflect the latest grades. The stored skill_graph_mermaid (status-free) is left as a fallback.
+    node_status = {nid: s.get("status") for nid, s in node_state.items()}
+    mermaid = skill_graph_to_mermaid(skill_graph, node_status)
+    if mermaid:
+        render_mermaid(mermaid)
+    if ls.get("summary"):
+        st.caption(ls["summary"])
+    with st.expander("Skill graph (JSON)"):
+        st.json(skill_graph)
+
+    if ls.get("review_notes") is not None:
+        badge = "✅ Passed" if ls.get("review_passed") else "⚠️ Needs work"
+        st.markdown(f"**Reviewer:** {badge}")
+        st.info(ls["review_notes"])
+
+    # --- Node picker (selectbox alongside the Mermaid; iframe can't report Mermaid clicks) ---
+    st.divider()
+    st.subheader("📖 Study a Skill")
+    label_by_id = _node_label_map(skill_graph)
+    node_ids = list(label_by_id.keys())
+    selected_id = st.selectbox(
+        "Pick a skill to study",
+        node_ids,
+        format_func=lambda i: label_by_id[i],
+        key="lesson_node_picker",
+    )
+    if st.button("📖 Open lesson", type="primary"):
+        ls["selected_node"] = selected_id
+        if selected_id not in ls["lessons"]:
+            node = next(n for n in nodes if n["id"] == selected_id)
+            prior_weaknesses = ls["node_state"].get(selected_id, {}).get("weaknesses", [])
+            logger.info("UI: opening lesson for node %s (%r)", selected_id, label_by_id[selected_id])
+            with st.spinner(f"Composing lesson for '{label_by_id[selected_id]}'..."):
+                try:
+                    out = run_lesson(node, ls.get("format_type", "B"), prior_weaknesses)
+                    ls["lessons"][selected_id] = {
+                        "content": out.get("content"),
+                        "exercise": {
+                            "format": out.get("exercise_format"),
+                            "statement": out.get("exercise_statement"),
+                            "grading_artifact": out.get("grading_artifact"),
+                        },
+                    }
+                except Exception as e:
+                    logger.exception("UI: lesson generation failed for node %s", selected_id)
+                    st.error(f"Lesson generation failed: {e}")
+        # No st.rerun(): the button press already triggered this run; on success we fall
+        # through to render the just-cached lesson below, and on failure the error stays visible.
+
+    # --- Render the open lesson (content + embedded exercise at the end) ---
+    open_id = ls.get("selected_node")
+    if open_id and open_id in ls["lessons"]:
+        lesson = ls["lessons"][open_id]
+        st.divider()
+        st.markdown(f"### {label_by_id.get(open_id, open_id)}")
+        if lesson.get("content"):
+            st.markdown(lesson["content"])
+        else:
+            st.warning("Lesson content could not be generated.")
+        if lesson.get("exercise", {}).get("statement"):
+            render_exercise(lesson["exercise"], node_id=open_id, learning_session=ls)
+
+    # --- Specialist findings (collapsed; the roadmap is secondary to the interactive lesson) ---
+    with st.expander("📋 Roadmap details (Academic / Market / Practical)", expanded=False):
+        tab1, tab2, tab3 = st.tabs(["📚 Academic Roadmap", "💼 Market Intelligence", "🛠️ Practical Application"])
+        with tab1:
+            academic_output = ls.get("academic_output")
+            if academic_output:
+                st.markdown(academic_output)
+            else:
+                st.warning("Academic data could not be generated.")
+        with tab2:
+            market_data = ls.get("market_output")
+            if market_data:
+                job = market_data["job"]
+                st.subheader(f"{job.get('title')} at {job.get('organization')}")
+                st.markdown(market_data["summary"])
+                st.link_button("View Job Posting", job.get("url", "#"))
+            else:
+                st.info("No specific job data found.")
+        with tab3:
+            practical_output = ls.get("practical_output")
+            if practical_output:
+                st.markdown(practical_output)
+            else:
+                st.warning("Practical advice could not be generated.")
+
 
 def main():
     st.set_page_config(page_title="MindMorph Learning Platform", layout="wide")
@@ -179,6 +392,7 @@ def main():
         format_type = fmt_label.split(" ")[0]
 
         if st.button("🚀 Generate Learning Path") and user_query:
+            logger.info("UI: generate requested (query=%r, format=%s)", user_query, format_type)
             with st.status("Orchestrating agents...", expanded=True) as status:
                 st.write("🤖 Running orchestration graph (orchestrate → scout → specialists → consensus → reviewer)...")
                 try:
@@ -191,58 +405,48 @@ def main():
                     )
                     loop.close()
                 except Exception as e:
+                    logger.exception("UI: graph execution failed")
                     st.error(f"Graph execution failed: {e}")
                     st.stop()
 
                 route = final_state.get("route", "UNKNOWN")
+                logger.info("UI: orchestration complete, route=%s", route)
                 st.write(f"Routing to: **{route}**")
 
                 if route == "SCOUT":
                     status.update(label="✨ Learning Path Generated!", state="complete", expanded=False)
-
-                    # Skill Dependency Graph (Consensus) + Reviewer verdict
-                    st.divider()
-                    st.subheader("🗺️ Skill Dependency Graph")
-                    mermaid = final_state.get("skill_graph_mermaid")
                     skill_graph = final_state.get("skill_graph")
-                    if mermaid:
-                        render_mermaid(mermaid)
-                        if skill_graph and skill_graph.get("summary"):
-                            st.caption(skill_graph["summary"])
-                        with st.expander("Skill graph (JSON)"):
-                            st.json(skill_graph)
+                    if skill_graph and skill_graph.get("nodes"):
+                        # Store the interactive learning session; rendering happens outside the
+                        # generate-button block so the picker/lesson survive Streamlit reruns.
+                        st.session_state.learning_session = {
+                            "skill_graph": skill_graph,
+                            "skill_graph_mermaid": final_state.get("skill_graph_mermaid"),
+                            "summary": skill_graph.get("summary"),
+                            "review_passed": final_state.get("review_passed"),
+                            "review_notes": final_state.get("review_notes"),
+                            "academic_output": final_state.get("academic_output"),
+                            "market_output": final_state.get("market_output"),
+                            "practical_output": final_state.get("practical_output"),
+                            "format_type": format_type,
+                            "node_state": {
+                                n["id"]: {
+                                    "status": "available",
+                                    "best_score": 0,
+                                    "attempts": 0,
+                                    "weaknesses": [],
+                                    "last_feedback": None,
+                                }
+                                for n in skill_graph["nodes"]
+                            },
+                            "lessons": {},
+                            "selected_node": None,
+                        }
+                        # A fresh path supersedes any prior standalone exercise panel.
+                        st.session_state.pop("exercise", None)
                     else:
+                        st.session_state.pop("learning_session", None)
                         st.warning("Skill graph could not be generated.")
-
-                    review_notes = final_state.get("review_notes")
-                    if review_notes is not None:
-                        passed = final_state.get("review_passed")
-                        badge = "✅ Passed" if passed else "⚠️ Needs work"
-                        st.markdown(f"**Reviewer:** {badge}")
-                        st.info(review_notes)
-
-                    # Specialist findings
-                    st.divider()
-                    tab1, tab2, tab3 = st.tabs(["📚 Academic Roadmap", "💼 Market Intelligence", "🛠️ Practical Application"])
-
-                    with tab1:
-                        academic_output = final_state.get("academic_output")
-                        if academic_output: st.markdown(academic_output)
-                        else: st.warning("Academic data could not be generated.")
-
-                    with tab2:
-                        market_data = final_state.get("market_output")
-                        if market_data:
-                            job = market_data["job"]
-                            st.subheader(f"{job.get('title')} at {job.get('organization')}")
-                            st.markdown(market_data["summary"])
-                            st.link_button("View Job Posting", job.get('url', '#'))
-                        else: st.info("No specific job data found.")
-
-                    with tab3:
-                        practical_output = final_state.get("practical_output")
-                        if practical_output: st.markdown(practical_output)
-                        else: st.warning("Practical advice could not be generated.")
 
                 elif route == "CONTENT":
                     status.update(label="✨ Lesson Generated!", state="complete", expanded=False)
@@ -276,6 +480,11 @@ def main():
                 else:
                     st.info(final_state.get("placeholder", f"Routed to {route}. Under development."))
                     status.update(label="Routing Complete", state="complete")
+
+        # Interactive learning session (SCOUT): skill graph + node picker + composed lesson.
+        # Rendered outside the generate block so picker/lesson interactions persist across reruns.
+        if st.session_state.get("learning_session"):
+            render_learning_session()
 
         # Exercise + grading panel (outside the spinner; persists across reruns for the Grade action).
         if st.session_state.get("exercise"):

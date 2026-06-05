@@ -1,0 +1,89 @@
+"""Phase 2 — mastery capture: score → node_state via app._apply_score (pure, no Streamlit run)."""
+import os
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT not in sys.path:
+    sys.path.append(ROOT)
+
+from app import _apply_score, MASTERY_THRESHOLD, REVIEW_THRESHOLD
+
+
+def _ls(node_id="n1", **overrides):
+    base = {"status": "available", "best_score": 0, "attempts": 0, "weaknesses": [], "last_feedback": None}
+    base.update(overrides)
+    return {"node_state": {node_id: base}}
+
+
+def test_high_score_marks_mastered():
+    ls = _ls()
+    _apply_score(ls, "n1", "coding_challenge", {"score": 100})
+    ns = ls["node_state"]["n1"]
+    assert ns["status"] == "mastered"
+    assert ns["best_score"] == 100
+    assert ns["attempts"] == 1
+
+
+def test_mid_score_is_in_progress():
+    ls = _ls()
+    _apply_score(ls, "n1", "coding_challenge", {"score": 65})
+    assert ls["node_state"]["n1"]["status"] == "in_progress"
+
+
+def test_low_score_needs_review():
+    ls = _ls()
+    _apply_score(ls, "n1", "coding_challenge", {"score": 30})
+    assert ls["node_state"]["n1"]["status"] == "needs_review"
+
+
+def test_threshold_boundaries():
+    ls = _ls()
+    _apply_score(ls, "n1", "coding_challenge", {"score": MASTERY_THRESHOLD})
+    assert ls["node_state"]["n1"]["status"] == "mastered"
+    ls = _ls()  # fresh node: sticky mastery would otherwise pin the score below
+    _apply_score(ls, "n1", "coding_challenge", {"score": REVIEW_THRESHOLD})
+    assert ls["node_state"]["n1"]["status"] == "in_progress"
+
+
+def test_regrade_keeps_best_score_and_increments_attempts():
+    ls = _ls(best_score=90, attempts=1, status="mastered")
+    _apply_score(ls, "n1", "coding_challenge", {"score": 40})
+    ns = ls["node_state"]["n1"]
+    assert ns["best_score"] == 90      # max(old, new) preserved
+    assert ns["attempts"] == 2
+    assert ns["status"] == "mastered"  # mastery is sticky: a worse retry does not revoke it
+
+
+def test_mastery_is_sticky_across_attempts():
+    ls = _ls()
+    _apply_score(ls, "n1", "coding_challenge", {"score": 100})  # earns mastery
+    _apply_score(ls, "n1", "coding_challenge", {"score": 10})   # worse retry
+    assert ls["node_state"]["n1"]["status"] == "mastered"
+    assert ls["node_state"]["n1"]["best_score"] == 100
+
+
+def test_struggle_still_shows_when_never_mastered():
+    ls = _ls()
+    _apply_score(ls, "n1", "coding_challenge", {"score": 65})  # in_progress
+    _apply_score(ls, "n1", "coding_challenge", {"score": 20})  # regress
+    assert ls["node_state"]["n1"]["status"] == "needs_review"
+
+
+def test_last_feedback_stores_result():
+    ls = _ls()
+    result = {"score": 100, "passed": 3, "total": 3}
+    _apply_score(ls, "n1", "coding_challenge", result)
+    assert ls["node_state"]["n1"]["last_feedback"] == result
+
+
+def test_case_study_score_path():
+    ls = _ls()
+    _apply_score(ls, "n1", "case_study", {"score": 85})
+    assert ls["node_state"]["n1"]["status"] == "mastered"
+
+
+def test_missing_score_defaults_to_zero():
+    ls = _ls()
+    _apply_score(ls, "n1", "coding_challenge", {})
+    assert ls["node_state"]["n1"]["status"] == "needs_review"
+    assert ls["node_state"]["n1"]["best_score"] == 0
