@@ -1,12 +1,15 @@
 # Provides an academically-grounded curriculum/roadmap for a learning topic.
 # Replaces the former inline `llm.invoke("You are an Academic Agent...")` call in app.py.
 
+import logging
 import sys
 import os
 from typing import Optional
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(PROJECT_ROOT)
+
+logger = logging.getLogger(__name__)
 
 
 from config import llm
@@ -40,14 +43,14 @@ class AcademicAgent:
         if len(user_query) == 0:
             raise ValueError("User query cannot be empty after stripping whitespace")
 
-        print("Generating academic roadmap...")
+        logger.info("Academic: generating roadmap for %r", user_query)
 
         try:
             chat_prompt = self.chat_prompt.format_messages(user_query=user_query)
             response = self.llm.invoke(chat_prompt)
             return response
-        except Exception as e:
-            print(f"Error generating academic roadmap: {str(e)}")
+        except Exception:
+            logger.exception("Academic: error generating roadmap")
             return None
 
 

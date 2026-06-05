@@ -24,6 +24,7 @@ from agents.synthesizer.synthesizer_agent import SynthesizerAgent
 class ContentState(TypedDict, total=False):
     user_query: str
     format_type: str          # 'A' Boost | 'B' Builder | 'C' Sprint
+    prior_feedback: Optional[str]  # score-aware gap guidance; None = plain generation
     creative_draft: str
     factual_findings: Optional[str]
     final_content: str
@@ -41,7 +42,11 @@ def build_content_graph(
 
     def creative_node(state: ContentState) -> dict:
         fmt = state.get("format_type") or "B"
-        return {"creative_draft": content.generate_content(state["user_query"], fmt)}
+        return {
+            "creative_draft": content.generate_content(
+                state["user_query"], fmt, remediation=state.get("prior_feedback")
+            )
+        }
 
     def factual_node(state: ContentState) -> dict:
         return {"factual_findings": factual.gather_facts(state["user_query"])}

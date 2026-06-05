@@ -1,10 +1,12 @@
-from py_compile import main
+import logging
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from dotenv import load_dotenv
 import asyncio
 import os
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 
 
@@ -19,7 +21,7 @@ class MCPClientInitialization:
     async def initialize(self):
         try:
 
-            print("Connecting to GitHub MCP server...")
+            logger.info("GitHub MCP: connecting to server...")
             # Initialize the MCP client for GitHub
             self.client = MultiServerMCPClient(
                 {
@@ -36,20 +38,17 @@ class MCPClientInitialization:
 
 
                             
-            print("MCP client created, fetching available tools...")
+            logger.info("GitHub MCP: client created, fetching available tools...")
 
             tools = await self.client.get_tools()
-            print("GitHub MCP client initialized successfully!")
-            print(f"Available tools: ")
-            
-            # Optionally print full tool details
+            logger.info("GitHub MCP: initialized with %d tool(s)", len(tools))
+
+            # Full tool details only at DEBUG level (verbose).
             for tool in tools:
-                print(f"\n->   {tool.name}")
-                print(f"\n->    Description: {tool.description}")
-                print(f"\n->    Args: {tool.args}\n")
-                
-        except Exception as e:
-            print(f"Error initializing MCP client: {e}")
+                logger.debug("GitHub MCP tool: %s — %s — args=%s", tool.name, tool.description, tool.args)
+
+        except Exception:
+            logger.exception("GitHub MCP: error initializing client")
             raise
 
 
@@ -62,13 +61,14 @@ class MCPClientInitialization:
                     "perPage": 5
                 }
             )
-            print(f"Search Results for '{query}':\n{result}")
+            logger.info("GitHub MCP: search returned results for %r", query)
+            logger.debug("GitHub MCP search results for %r:\n%s", query, result)
             return result
         except StopIteration:
-            print("The 'search_repositories' tool is not available.")
+            logger.warning("GitHub MCP: 'search_repositories' tool is not available")
             return None
-        except Exception as e:
-            print(f"Error invoking tool: {e}")
+        except Exception:
+            logger.exception("GitHub MCP: error invoking search tool")
             return None
             
     async def run(self):

@@ -10,6 +10,7 @@
 # (same shape as the dual-path content graph). Live execution / grading of a submitted solution is
 # NOT part of this graph — it is a separate step (tools/code_executor.py) fired from the UI.
 
+import logging
 import sys
 import os
 from typing import Any, Optional, TypedDict
@@ -17,6 +18,8 @@ from typing import Any, Optional, TypedDict
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.append(PROJECT_ROOT)
+
+logger = logging.getLogger(__name__)
 
 from langgraph.graph import StateGraph, START, END
 
@@ -76,8 +79,8 @@ def build_exercise_graph(
         query = f"{state['user_query']} example projects"
         try:
             material = await github(query)
-        except Exception as e:
-            print(f"Exercise GitHub node error: {e}")
+        except Exception:
+            logger.exception("Exercise GitHub node error")
             material = None
         return {"github_material": _material_to_text(material)}
 

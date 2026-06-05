@@ -7,6 +7,7 @@ langsmith
 pydantic
 python-dotenv
 streamlit
+streamlit-ace
 ddgs
 pytest
 pytest-asyncio

@@ -98,3 +98,15 @@ def test_content_graph_module_imports_clean():
 def test_exercise_graph_module_imports_clean():
     out = _import_output("graph.exercise_graph")
     assert "choosing exercise format" not in out
+
+
+def test_lesson_graph_module_imports_clean():
+    out = _import_output("graph.lesson_graph")
+    assert "ContentAgent: Generating" not in out
+    assert "choosing exercise format" not in out
+
+
+def test_logging_config_imports_clean():
+    # Importing the logging config must not configure handlers or write any log line.
+    out = _import_output("logging_config")
+    assert "Logging configured" not in out

@@ -1,12 +1,15 @@
 # Exercise Synthesizer (architecture §6.4): merges raw web material (GitHub repos, blog tutorials,
 # dataset links) into one personalized, original practice exercise for the learner's goal.
 
+import logging
 import sys
 import os
 from typing import Optional
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(PROJECT_ROOT)
+
+logger = logging.getLogger(__name__)
 
 from langchain_core.prompts import (
     ChatPromptTemplate,
@@ -59,7 +62,9 @@ class ExerciseSynthesizerAgent:
         if not user_query or not isinstance(user_query, str):
             raise ValueError("User query must be a non-empty string")
 
-        print("Exercise Synthesizer: composing personalized exercise...")
+        logger.info(
+            "ExerciseSynthesizer: composing %s exercise for %r", exercise_format, user_query
+        )
         try:
             messages = self.chat_prompt.format_messages(
                 user_query=user_query,
@@ -69,8 +74,8 @@ class ExerciseSynthesizerAgent:
                 dataset_material=dataset_material or _NONE,
             )
             return self.llm.invoke(messages).content
-        except Exception as e:
-            print(f"Error synthesizing exercise: {str(e)}")
+        except Exception:
+            logger.exception("ExerciseSynthesizer: error composing exercise")
             return None
 
 

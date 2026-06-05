@@ -4,6 +4,10 @@
 __pycache__/
 *.pyc
 
+# Runtime logs
+logs/
+*.log
+
 # Source design PDFs (kept local, not committed)
 *.pdf
 
