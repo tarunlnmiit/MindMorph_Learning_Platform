@@ -9,6 +9,7 @@
 # Skill Dependency Graph (JSON), the renderer turns it into Mermaid, and Reviewer checks it.
 # Specialist / content nodes write distinct state keys, so fan-out needs no custom reducer.
 
+import logging
 import sys
 import os
 import json
@@ -17,6 +18,8 @@ from typing import Any, Optional, TypedDict
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.append(PROJECT_ROOT)
+
+logger = logging.getLogger(__name__)
 
 from langgraph.graph import StateGraph, START, END
 
@@ -94,8 +97,8 @@ async def _run_market(market_agent: Any, query: str, location: str = "United Sta
             return None
         summary = await market_agent.summarize_job(jobs[0])
         return {"job": jobs[0], "summary": summary}
-    except Exception as e:
-        print(f"Market node error: {e}")
+    except Exception:
+        logger.exception("Market node error")
         return None
 
 
@@ -107,8 +110,8 @@ async def _fetch_github_repos(query: str) -> Optional[Any]:
             return None
         await client.initialize()
         return await client.search_github_repositories(query)
-    except Exception as e:
-        print(f"GitHub repo fetch error: {e}")
+    except Exception:
+        logger.exception("GitHub repo fetch error")
         return None
 
 

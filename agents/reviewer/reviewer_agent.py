@@ -1,11 +1,14 @@
 # Reviews a Skill Dependency Graph for coherence, completeness, and fitness.
 
+import logging
 import sys
 import os
 from typing import Optional
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(PROJECT_ROOT)
+
+logger = logging.getLogger(__name__)
 
 from langchain_core.prompts import (
     ChatPromptTemplate,
@@ -40,15 +43,18 @@ class ReviewerAgent:
         if not user_query or not isinstance(user_query, str):
             raise ValueError("User query must be a non-empty string")
 
-        print("Reviewer: evaluating skill dependency graph...")
+        logger.info("Reviewer: evaluating skill dependency graph for %r", user_query)
         try:
             messages = self.chat_prompt.format_messages(
                 user_query=user_query,
                 skill_graph_json=skill_graph_json,
             )
-            return self.structured_llm.invoke(messages)
-        except Exception as e:
-            print(f"Error reviewing skill graph: {str(e)}")
+            result = self.structured_llm.invoke(messages)
+            if result is not None:
+                logger.info("Reviewer: verdict passed=%s", getattr(result, "passed", None))
+            return result
+        except Exception:
+            logger.exception("Reviewer: error reviewing skill graph")
             return None
 
 

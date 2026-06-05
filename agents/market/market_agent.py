@@ -1,3 +1,4 @@
+import logging
 import sys
 import os
 
@@ -6,7 +7,7 @@ sys.path.append(PROJECT_ROOT)
 
 
 
-from config import llm 
+from config import llm
 from dotenv import load_dotenv
 from tools.job_scrapper_tool import JobScraperService
 import asyncio
@@ -17,6 +18,8 @@ import os
 from config import llm
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 class MarketAnalysisAgent:
     def __init__(self):
@@ -61,12 +64,12 @@ class MarketAnalysisAgent:
             """
             
             # Get response from LLM
-            print("Sending data to LLM for summarization...")
+            logger.info("Market: summarizing job posting %r", job_data.get("title", "N/A"))
             response = await self.llm.ainvoke(prompt)
             return response.content
-            
-        except Exception as e:
-            print(f"Error summarizing with LLM: {e}")
+
+        except Exception:
+            logger.exception("Market: error summarizing job with LLM")
             return None
 
     async def extract_job_title(self, query: str) -> str:
@@ -86,8 +89,8 @@ class MarketAnalysisAgent:
             resp = await self.llm.ainvoke(prompt)
             title = (resp.content or "").strip().strip('"').splitlines()[0].strip()
             return title or query
-        except Exception as e:
-            print(f"Job-title extraction failed, using raw query: {e}")
+        except Exception:
+            logger.exception("Market: job-title extraction failed, using raw query")
             return query
 
     async def run_analysis(self, search_query: str, location: str):

@@ -1,4 +1,5 @@
 
+import logging
 import sys
 import os
 from typing import Optional, List, Dict, Any
@@ -17,6 +18,8 @@ import re
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
 class JobScraperService:
     def __init__(self):
         self.client = None
@@ -26,7 +29,7 @@ class JobScraperService:
     async def initialize(self):
         """Initialize the MCP client connection."""
         try:
-            print("Connecting to Job Scrapper MCP server...")
+            logger.info("JobScraper MCP: connecting to server...")
             self.client = MultiServerMCPClient(
                 {
                     "apify": {
@@ -38,11 +41,11 @@ class JobScraperService:
                     }
                 }
             )
-            print("Job Scrapper MCP client initialized successfully!, fetching available tools...")
+            logger.info("JobScraper MCP: client initialized, fetching available tools...")
             self.tools = await self.client.get_tools()
             return self.client
-        except Exception as e:
-            print(f"Error initializing MCP client: {e}")
+        except Exception:
+            logger.exception("JobScraper MCP: error initializing client")
             raise
 
     # Apify actor name for the LinkedIn job-search actor (as exposed by the MCP server).
@@ -62,7 +65,7 @@ class JobScraperService:
                 if tool.name == self.SEARCH_TOOL_NAME
             )
 
-            print(f"\nSearching for: '{query}' in {location}...")
+            logger.info("JobScraper: searching for %r in %r", query, location)
             # `limit` must be >= 10 per the actor's input schema.
             results = await job_search_tool.ainvoke({
                 "titleSearch": query,
@@ -84,7 +87,7 @@ class JobScraperService:
                 dataset_id = default_ds.get('id')
                 item_count = default_ds.get('itemCount', 0)
                 if dataset_id:
-                    print(f"Dataset {dataset_id} ready ({item_count} items).")
+                    logger.info("JobScraper: dataset %s ready (%s items)", dataset_id, item_count)
                     if not item_count:
                         # Run succeeded but matched no postings — nothing to fetch.
                         return None
@@ -93,10 +96,10 @@ class JobScraperService:
             return None
 
         except StopIteration:
-            print(f"The '{self.SEARCH_TOOL_NAME}' tool is not available.")
+            logger.warning("JobScraper: %r tool is not available", self.SEARCH_TOOL_NAME)
             return None
-        except Exception as e:
-            print(f"Error searching jobs: {e}")
+        except Exception:
+            logger.exception("JobScraper: error searching jobs")
             return None
 
     @staticmethod
@@ -121,7 +124,7 @@ class JobScraperService:
                 if tool.name == self.OUTPUT_TOOL_NAME
             )
 
-            print(f"\nRetrieving job results from dataset: {dataset_id}...")
+            logger.info("JobScraper: retrieving results from dataset %s", dataset_id)
             results = await get_output_tool.ainvoke({
                 "datasetId": dataset_id,
                 "limit": limit
@@ -136,10 +139,10 @@ class JobScraperService:
             return all_jobs
 
         except StopIteration:
-            print(f"The '{self.OUTPUT_TOOL_NAME}' tool is not available.")
+            logger.warning("JobScraper: %r tool is not available", self.OUTPUT_TOOL_NAME)
             return []
-        except Exception as e:
-            print(f"Error retrieving job results: {e}")
+        except Exception:
+            logger.exception("JobScraper: error retrieving job results")
             return []
 
     def _parse_job_data(self, text_data: str) -> List[Dict]:
@@ -184,8 +187,8 @@ class JobScraperService:
                 return jobs
             except Exception:
                 return []
-        except Exception as e:
-            print(f"Error parsing job data: {e}")
+        except Exception:
+            logger.exception("JobScraper: error parsing job data")
             return []
 
 

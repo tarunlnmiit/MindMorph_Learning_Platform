@@ -1,11 +1,14 @@
 # Combines the Academic / Market / Practical findings into a single Skill Dependency Graph.
 
+import logging
 import sys
 import os
 from typing import Optional
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(PROJECT_ROOT)
+
+logger = logging.getLogger(__name__)
 
 from langchain_core.prompts import (
     ChatPromptTemplate,
@@ -52,7 +55,7 @@ class ConsensusAgent:
         if not user_query or not isinstance(user_query, str):
             raise ValueError("User query must be a non-empty string")
 
-        print("Consensus: building skill dependency graph...")
+        logger.info("Consensus: building skill dependency graph for %r", user_query)
         try:
             messages = self.chat_prompt.format_messages(
                 user_query=user_query,
@@ -60,9 +63,14 @@ class ConsensusAgent:
                 market=market or "Not available.",
                 practical=practical or "Not available.",
             )
-            return self.structured_llm.invoke(messages)
-        except Exception as e:
-            print(f"Error building skill graph: {str(e)}")
+            graph = self.structured_llm.invoke(messages)
+            logger.info(
+                "Consensus: built skill graph with %d nodes",
+                len(graph.nodes) if graph else 0,
+            )
+            return graph
+        except Exception:
+            logger.exception("Consensus: error building skill graph")
             return None
 
 

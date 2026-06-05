@@ -3,12 +3,15 @@
 #
 # Phase B adds `grade_submission` (run the tests / score against the rubric) below.
 
+import logging
 import sys
 import os
 from typing import Optional
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(PROJECT_ROOT)
+
+logger = logging.getLogger(__name__)
 
 from langchain_core.prompts import (
     ChatPromptTemplate,
@@ -49,7 +52,7 @@ class GraderAgent:
         if not exercise_statement or not isinstance(exercise_statement, str):
             raise ValueError("exercise_statement must be a non-empty string")
 
-        print("Grader: building grading harness...")
+        logger.info("Grader: building grading harness (%s)", exercise_format)
         try:
             messages = self.chat_prompt.format_messages(
                 user_query=user_query,
@@ -57,8 +60,8 @@ class GraderAgent:
                 exercise_statement=exercise_statement,
             )
             return self.structured_llm.invoke(messages)
-        except Exception as e:
-            print(f"Error building grading artifact: {str(e)}")
+        except Exception:
+            logger.exception("Grader: error building grading artifact")
             return None
 
 
@@ -87,6 +90,7 @@ def grade_submission(exercise_format: str, solution_text: str, grading_artifact:
         return None
 
     artifact = grading_artifact or {}
+    logger.info("Grader: grading %s submission (%d chars)", exercise_format, len(solution_text))
     if exercise_format == "coding_challenge":
         # Lazy import keeps the code-execution surface out of the module-import path.
         from tools.code_executor import execute_tests
@@ -94,7 +98,12 @@ def grade_submission(exercise_format: str, solution_text: str, grading_artifact:
         # Join with "\n" (not "\n\n"): the grader sometimes returns the test module split into
         # per-line fragments; a single newline reconstructs it faithfully (indentation preserved).
         tests = artifact.get("unit_tests") or []
-        return execute_tests(solution_text, "\n".join(tests))
+        result = execute_tests(solution_text, "\n".join(tests))
+        logger.info(
+            "Grader: coding result %s/%s passed (score=%s)",
+            (result or {}).get("passed"), (result or {}).get("total"), (result or {}).get("score"),
+        )
+        return result
 
     return _grade_case_study(solution_text, artifact)
 
@@ -110,13 +119,13 @@ def _grade_case_study(solution_text: str, artifact: dict) -> Optional[dict]:
     chat_prompt = ChatPromptTemplate.from_messages([system_template, human_template])
     structured_llm = llm.with_structured_output(RubricScore)
 
-    print("Grader: scoring case-study submission against rubric...")
+    logger.info("Grader: scoring case-study submission against rubric")
     try:
         messages = chat_prompt.format_messages(rubric=rubric_text, submission=solution_text)
         result = structured_llm.invoke(messages)
         return result.model_dump()
-    except Exception as e:
-        print(f"Error scoring case study: {str(e)}")
+    except Exception:
+        logger.exception("Grader: error scoring case study")
         return None
 
 

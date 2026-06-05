@@ -1,12 +1,15 @@
 # Format Selector (architecture §6.4): decides whether a learning goal is best practised as a
 # hands-on coding challenge or an analytical case study.
 
+import logging
 import sys
 import os
 from typing import Optional
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(PROJECT_ROOT)
+
+logger = logging.getLogger(__name__)
 
 from langchain_core.prompts import (
     ChatPromptTemplate,
@@ -45,12 +48,14 @@ class FormatSelectorAgent:
         if not user_query or not isinstance(user_query, str):
             raise ValueError("User query must be a non-empty string")
 
-        print("Format Selector: choosing exercise format...")
+        logger.info("FormatSelector: choosing exercise format for %r", user_query)
         try:
-            messages = self.chat_prompt.format_messages(user_query=user_query)
-            return self.structured_llm.invoke(messages)
-        except Exception as e:
-            print(f"Error selecting exercise format: {str(e)}")
+            result = self.structured_llm.invoke(self.chat_prompt.format_messages(user_query=user_query))
+            if result is not None:
+                logger.info("FormatSelector: chose %s", getattr(result, "format", None))
+            return result
+        except Exception:
+            logger.exception("FormatSelector: error selecting exercise format")
             return None
 
 

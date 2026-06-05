@@ -1,11 +1,14 @@
 # finds github public projects based on assigned task from scout agent 
 
+import logging
 import sys
-import os 
+import os
 from typing import Optional
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(PROJECT_ROOT)
+
+logger = logging.getLogger(__name__)
 
 
 from config import llm
@@ -55,14 +58,14 @@ class PracticalAgent:
                 f"{github_repos}"
             )
 
-        print("Providing practical advice...")
+        logger.info("Practical: providing advice (grounded=%s)", bool(github_repos))
 
         try:
              chat_prompt = self.chat_prompt.format_messages(user_query=user_query)
              response = self.llm.invoke(chat_prompt)
              return response
-        except Exception as e:
-                print(f"Error providing practical advice: {str(e)}")
+        except Exception:
+                logger.exception("Practical: error providing advice")
                 return None
 
 

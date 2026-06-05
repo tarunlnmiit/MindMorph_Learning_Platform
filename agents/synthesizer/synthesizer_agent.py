@@ -1,11 +1,14 @@
 # Master LLM: merges the creative draft (Path A) with factual web findings (Path B).
 
+import logging
 import sys
 import os
 from typing import Optional
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(PROJECT_ROOT)
+
+logger = logging.getLogger(__name__)
 
 from langchain_core.prompts import (
     ChatPromptTemplate,
@@ -50,7 +53,7 @@ class SynthesizerAgent:
         if not factual_findings:
             return creative_draft
 
-        print("Synthesizer: merging creative draft with factual findings...")
+        logger.info("Synthesizer: merging creative draft with factual findings")
         try:
             messages = self.chat_prompt.format_messages(
                 user_query=user_query,
@@ -58,8 +61,8 @@ class SynthesizerAgent:
                 factual_findings=factual_findings,
             )
             return self.llm.invoke(messages).content
-        except Exception as e:
-            print(f"Error synthesizing content: {str(e)}")
+        except Exception:
+            logger.exception("Synthesizer: error merging content; falling back to creative draft")
             # On failure, the creative draft is still a usable lesson.
             return creative_draft
 

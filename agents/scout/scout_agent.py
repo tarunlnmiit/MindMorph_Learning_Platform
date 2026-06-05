@@ -1,3 +1,4 @@
+import logging
 import sys
 import os
 from typing import Optional
@@ -5,6 +6,8 @@ from typing import Optional
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(PROJECT_ROOT)
+
+logger = logging.getLogger(__name__)
 
 
 from config import llm
@@ -51,14 +54,14 @@ class ScoutAgent:
         if len(user_query) == 0:
                 raise ValueError("User query cannot be empty after stripping whitespace")
         
-        print("Generating specialized queries for sub-agents...")
-        
+        logger.info("Scout: generating specialized sub-agent queries for %r", user_query)
+
         try:
              chat_prompt = self.chat_prompt.format_messages(user_query=user_query)
-             response = self.structured_llm.invoke(chat_prompt) 
+             response = self.structured_llm.invoke(chat_prompt)
              return response
-        except Exception as e:
-                print(f"Error generating specialized queries: {str(e)}")
+        except Exception:
+                logger.exception("Scout: error generating specialized queries")
                 return None
 
             

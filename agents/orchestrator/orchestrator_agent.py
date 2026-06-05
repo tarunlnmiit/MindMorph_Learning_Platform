@@ -1,3 +1,4 @@
+import logging
 import sys
 import os
 from typing import Optional
@@ -5,6 +6,8 @@ from typing import Optional
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(PROJECT_ROOT)
+
+logger = logging.getLogger(__name__)
 
 
 from agents.orchestrator.orchestrator_agents_personality import  AgentMetadata
@@ -62,25 +65,28 @@ class OrchestratorAgent:
             
             
             
+            logger.info("Orchestrator: routing query %r", user_query)
             try:
                     # Format prompt with user query
                     chat_prompt = self.chat_prompt.format_messages(user_query=user_query)
-                    
+
                     # Invoke structured LLM
                     response = self.structured_llm.invoke(chat_prompt)
-                    
+
                     # Validate response structure
                     if not isinstance(response, Orchestrator_Output_Schema):
                         raise TypeError(f"Expected Orchestrator_Output_Schema, got {type(response)}")
-                    
+
                     # Validate assigned agent is one of expected values
                     valid_agents = {"SCOUT", "CONTENT", "EXERCISE"}
                     if response.Assigned_Agent not in valid_agents:
-                        raise ValueError(f"Invalid agent: {response.Assigned_Agent}. Must be one of {valid_agents}")     
-                
+                        raise ValueError(f"Invalid agent: {response.Assigned_Agent}. Must be one of {valid_agents}")
+
+                    logger.info("Orchestrator: routed to %s", response.Assigned_Agent)
                     return response
-                    
-            except Exception as e:    
+
+            except Exception as e:
+                logger.exception("Orchestrator: failed to route query")
                 raise RuntimeError(f"Failed to route query: {str(e)}")
                     
 
