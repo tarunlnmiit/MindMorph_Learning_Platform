@@ -1,3 +1,10 @@
+## Environment
+
+ALWAYS use the `mindmorph` conda environment for every command in this project — running
+Python, pip installs, pytest, streamlit, anything. Never use base.
+- Run one-off commands with `conda run -n mindmorph <cmd>` (e.g. `conda run -n mindmorph python -m pytest -q`).
+- Install deps into it: `conda run -n mindmorph pip install <pkg>` (then add to `requirements.txt`).
+
 ## graphify
 
 This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
