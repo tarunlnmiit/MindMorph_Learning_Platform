@@ -119,7 +119,7 @@ async def test_content_route_runs_dual_path():
     assert state["creative_draft"] == "CREATIVE_DRAFT"
     assert state["factual_findings"] == "FACTUAL_FINDINGS"
     assert state["final_content"] == "FINAL_LESSON"
-    content.generate_content.assert_called_once_with("Python lists", "B")
+    content.generate_content.assert_called_once_with("Python lists", "B", remediation=None)
     synthesizer.synthesize.assert_called_once_with("Python lists", "CREATIVE_DRAFT", "FACTUAL_FINDINGS")
 
 
