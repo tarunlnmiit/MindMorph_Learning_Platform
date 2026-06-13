@@ -117,6 +117,13 @@ Each item notes the **architecture section** it satisfies and the **code gap** i
    (`tools/code_executor.py`). *Satisfies:* §3.3, §6.4. *Closed:* EXERCISE "Under development".
    The learn → plan → content → **practice + grade** loop now runs end-to-end on LangGraph.
    Deferred: containerized grading sandbox (Evaluation Service), real dataset ingestion.
+5b. ✅ **Adaptive learning loop** — clickable skill graph → composed lesson (content + embedded
+    exercise) → live grade → **mastery capture** (sticky per-node status overlay) → **adaptation**:
+    a graded score mutates the graph (remedial prerequisite nodes on a low score / unlock edges on
+    mastery) and triggers **score-aware regeneration** of the failed node's lesson against the gaps.
+    `graph/lesson_graph.py`, `agents/adaptation/`, `graph/skill_graph_adapt.py` (deterministic,
+    id-stable merge). State lives in `st.session_state.learning_session` (maps 1:1 to P1 #6 tables).
+    Deferred to #6: Postgres/Redis persistence of `node_state`/`lessons`.
 6. **Persistence + backend** — FastAPI service layer; Pinecone (long-term) + Redis (short-term)
    memory; PostgreSQL for user/progress. *Satisfies:* §5.2, §5.4. *Closes:* stateless prototype.
 7. **RAG + Model Router** — grounding pipelines and multi-vendor routing. *Satisfies:* §5.3, §5.7.

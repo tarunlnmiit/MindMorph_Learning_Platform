@@ -106,6 +106,17 @@ def test_lesson_graph_module_imports_clean():
     assert "choosing exercise format" not in out
 
 
+def test_adaptation_agent_import_has_no_side_effects():
+    out = _import_output("agents.adaptation.adaptation_agent")
+    assert "evaluating node" not in out  # the logged adapt() line must not fire on import
+
+
+def test_skill_graph_adapt_imports_clean():
+    # Pure deterministic merge module: import must not touch the LLM or print anything.
+    out = _import_output("graph.skill_graph_adapt")
+    assert "Adaptation:" not in out
+
+
 def test_logging_config_imports_clean():
     # Importing the logging config must not configure handlers or write any log line.
     out = _import_output("logging_config")
