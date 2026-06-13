@@ -323,6 +323,69 @@ def _ordered_node_ids(skill_graph: dict) -> list:
     ]
 
 
+# --- Prerequisite-gated completion ------------------------------------------------------------
+# Per-node mastery (best_score >= 80, sticky) is the underlying truth. "Complete" is derived: a node
+# counts as complete only when it AND all its prerequisites (transitively) are mastered. A node that
+# passed its own exercise but still has an incomplete prerequisite renders 🔒 ("blocked"), not ✅, and
+# is excluded from the progress count — so completion reflects the whole dependency chain.
+
+
+def _prereqs_by_node(skill_graph: dict) -> dict:
+    """Map node_id -> set of its prerequisite ids. Edge convention (SkillEdge): source = prerequisite,
+    target = the skill that depends on it. So prereqs of X = sources of edges whose target is X."""
+    prereqs: dict = {n["id"]: set() for n in skill_graph.get("nodes", [])}
+    for e in skill_graph.get("edges", []) or []:
+        src, tgt = e.get("source"), e.get("target")
+        if tgt in prereqs and src is not None:
+            prereqs[tgt].add(src)
+    return prereqs
+
+
+def _complete_node_ids(skill_graph: dict, node_state: dict) -> set:
+    """Set of node ids that are fully complete: mastered AND every prerequisite complete (recursive).
+
+    Memoized with a cycle guard — a node currently being resolved is treated as not-complete, so a
+    cyclic graph returns instead of recursing forever (the graph is meant to be acyclic).
+    """
+    prereqs = _prereqs_by_node(skill_graph)
+
+    def _is_mastered(nid: str) -> bool:
+        return node_state.get(nid, {}).get("status") == "mastered"
+
+    memo: dict = {}
+    visiting: set = set()
+
+    def _complete(nid: str) -> bool:
+        if nid in memo:
+            return memo[nid]
+        if nid in visiting:  # cycle: don't recurse, count as not-complete
+            return False
+        if not _is_mastered(nid):
+            memo[nid] = False
+            return False
+        visiting.add(nid)
+        result = all(_complete(p) for p in prereqs.get(nid, set()))
+        visiting.discard(nid)
+        memo[nid] = result
+        return result
+
+    return {nid for nid in prereqs if _complete(nid)}
+
+
+def _display_status(skill_graph: dict, node_state: dict) -> dict:
+    """node_id -> status handed to the renderer. Mastered + complete -> 'mastered' (✅); mastered but
+    a prerequisite is incomplete -> 'blocked' (🔒); otherwise the underlying status (unchanged)."""
+    complete = _complete_node_ids(skill_graph, node_state)
+    out: dict = {}
+    for nid, s in node_state.items():
+        status = s.get("status")
+        if status == "mastered" and nid not in complete:
+            out[nid] = "blocked"
+        else:
+            out[nid] = status
+    return out
+
+
 def run_lesson(node: dict, format_type: str, prior_weaknesses: list):
     """Run the lesson graph for one clicked skill node (content + exercise). Sync wrapper."""
     loop = asyncio.new_event_loop()
@@ -356,13 +419,15 @@ def render_learning_session():
         return
 
     node_state = ls["node_state"]
-    mastered = sum(1 for s in node_state.values() if s.get("status") == "mastered")
+    # Prerequisite-gated completion: a node counts only when it AND its prerequisites are mastered.
+    complete = _complete_node_ids(skill_graph, node_state)
 
     st.divider()
-    st.subheader(f"🎯 {mastered} / {len(nodes)} skills mastered")
-    # Live recompute with the mastery overlay (deterministic, no LLM cost) so node colors/glyphs
-    # reflect the latest grades. The stored skill_graph_mermaid (status-free) is left as a fallback.
-    node_status = {nid: s.get("status") for nid, s in node_state.items()}
+    st.subheader(f"🎯 {len(complete)} / {len(nodes)} skills complete")
+    # Live recompute with the status overlay (deterministic, no LLM cost) so node colors/glyphs
+    # reflect the latest grades. _display_status downgrades a mastered-but-prereq-incomplete node to
+    # 🔒 'blocked'. The stored skill_graph_mermaid (status-free) is left as a fallback.
+    node_status = _display_status(skill_graph, node_state)
     mermaid = skill_graph_to_mermaid(skill_graph, node_status)
     if mermaid:
         render_mermaid(mermaid)

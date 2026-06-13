@@ -11,8 +11,15 @@ _LEVEL_CLASS = {"foundational": "foundational", "intermediate": "intermediate", 
 
 # Mastery status overlay (Phase 2): glyph appended to the label + a status class that
 # overrides the level color. Only non-"available" statuses are drawn.
-_STATUS_GLYPH = {"mastered": "✅", "needs_review": "🔁", "in_progress": "▶"}
-_STATUS_CLASS = {"mastered": "mastered", "needs_review": "needs_review", "in_progress": "in_progress"}
+# "blocked" (prerequisite-gated completion): a node that passed its own exercise but still has an
+# incomplete prerequisite — shown 🔒 instead of ✅ so completion reflects the whole dependency chain.
+_STATUS_GLYPH = {"mastered": "✅", "needs_review": "🔁", "in_progress": "▶", "blocked": "🔒"}
+_STATUS_CLASS = {
+    "mastered": "mastered",
+    "needs_review": "needs_review",
+    "in_progress": "in_progress",
+    "blocked": "blocked",
+}
 
 
 def _safe_id(raw: Any) -> str:
@@ -100,6 +107,7 @@ def skill_graph_to_mermaid(graph: Any, node_status: dict | None = None) -> str:
         lines.append("    classDef mastered fill:#dcfce7,stroke:#16a34a,color:#14532d;")
         lines.append("    classDef needs_review fill:#fff,stroke:#dc2626,stroke-width:3px,color:#7f1d1d;")
         lines.append("    classDef in_progress fill:#fef3c7,stroke:#d97706,color:#78350f;")
+        lines.append("    classDef blocked fill:#f1f5f9,stroke:#64748b,stroke-dasharray:4 3,color:#334155;")
         for nid, scls in status_classes:
             lines.append(f"    class {nid} {scls};")
 

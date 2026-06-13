@@ -60,3 +60,12 @@ def test_node_status_absent_is_backcompat():
     assert base == skill_graph_to_mermaid(_STATUS_GRAPH, None)
     assert base == skill_graph_to_mermaid(_STATUS_GRAPH, {})
     assert "classDef mastered" not in base  # no status lines emitted without statuses
+
+
+def test_blocked_status_renders_lock_glyph_and_class():
+    status = {"a": "blocked", "b": "mastered"}
+    m = skill_graph_to_mermaid(_STATUS_GRAPH, status)
+    assert 'a["🔒 A"]' in m                 # blocked => lock glyph, not the ✅
+    assert "classDef blocked" in m
+    assert "class a blocked;" in m
+    assert 'b["✅ B"]' in m                  # genuinely-complete node still ✅
