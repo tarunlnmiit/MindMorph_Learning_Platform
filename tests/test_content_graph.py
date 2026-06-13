@@ -58,3 +58,20 @@ async def test_content_graph_threads_prior_feedback_as_remediation():
     content.generate_content.assert_called_once_with(
         "Python lists", "A", remediation="off-by-one errors"
     )
+
+
+def test_remediation_with_braces_does_not_break_prompt_template():
+    """Phase 3 regression: LLM-generated gaps contain literal braces (dict/set literals, f-strings).
+    They must be escaped before from_template, or format_messages raises and the bare except returns
+    an 'Error generating content:' string — silently failing the score-aware regeneration."""
+    from agents.content_generator.content_agent import ContentAgent
+
+    agent = ContentAgent(push_to_langsmith=False)
+    agent.llm = MagicMock()
+    agent.llm.invoke.return_value = MagicMock(content="REMEDIAL LESSON")
+
+    out = agent.generate_content("Python dicts", "B", remediation="dict literal {k: v} and set {1, 2}")
+
+    assert out == "REMEDIAL LESSON"
+    assert not out.startswith("Error generating content")
+    agent.llm.invoke.assert_called_once()

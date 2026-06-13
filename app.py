@@ -1,5 +1,6 @@
 import streamlit as st
 import asyncio
+import json
 import logging
 import os
 import sys
@@ -70,10 +71,15 @@ def render_exercise(exercise: dict, node_id: str | None = None, learning_session
         if artifact.get("instructions"):
             st.markdown(f"**Instructions:** {artifact['instructions']}")
         if fmt == "coding_challenge":
+            # The grader often returns unit_tests as per-line fragments; reconstruct the module
+            # with "\n" (same join grade_submission uses to RUN them) so the harness shows as one
+            # coherent block instead of one st.code box per line. Count real `def test`s, not lines.
             tests = artifact.get("unit_tests") or []
-            st.caption(f"{len(tests)} unit test(s) will run against your solution.")
-            for i, t in enumerate(tests, 1):
-                st.code(t, language="python")
+            test_module = "\n".join(tests)
+            n_tests = test_module.count("def test") or len(tests)
+            st.caption(f"{n_tests} unit test(s) will run against your solution.")
+            if test_module.strip():
+                st.code(test_module, language="python")
         else:
             rubric = artifact.get("rubric") or []
             if rubric:
@@ -112,6 +118,10 @@ def render_exercise(exercise: dict, node_id: str | None = None, learning_session
                 # Capture mastery, then rerun so the graph re-colors + progress updates; the
                 # persisted last_feedback (rendered below) makes the result reappear after rerun.
                 _apply_score(learning_session, node_id, fmt, result)
+                # Phase 3: close the loop — mutate the graph (remedial nodes / unlock edges) and
+                # invalidate this node's cached lesson on a low score, before the re-render.
+                with st.spinner("Adapting your roadmap..."):
+                    _adapt_after_grade(learning_session, node_id)
                 st.rerun()
             else:
                 _render_grade_result(fmt, result)
@@ -173,6 +183,67 @@ def _apply_score(ls: dict, node_id: str, fmt: str, result: dict) -> None:
         "weaknesses": old.get("weaknesses", []),  # Phase 3 fills remediation_focus
         "last_feedback": result,
     }
+
+
+def _default_node_state() -> dict:
+    """Fresh node_state entry (matches the SCOUT-init shape) for newly added remedial nodes."""
+    return {"status": "available", "best_score": 0, "attempts": 0, "weaknesses": [], "last_feedback": None}
+
+
+def _feedback_text(result: dict | None) -> str:
+    """Flatten a grade result into a short text blob the Adaptation agent can read as gaps."""
+    if not result:
+        return ""
+    parts: list[str] = []
+    for f in result.get("failures", []) or []:
+        parts.append(str(f))
+    if result.get("feedback"):
+        parts.append(str(result["feedback"]))
+    for line in result.get("per_criterion", []) or []:
+        parts.append(str(line))
+    return "\n".join(parts)[:2000]  # cap: keep the adaptation prompt bounded
+
+
+def _adapt_after_grade(ls: dict, node_id: str) -> None:
+    """Phase 3 — close the loop: a graded node mutates the graph (remedial nodes / unlock edges)
+    and, on a low score, invalidates the cached lesson so the next open regenerates against the gaps.
+
+    Runs only when the latest grade pushed the node to needs_review or mastered. LLM-backed; any
+    failure is swallowed (the grade + mastery already persisted — adaptation is best-effort).
+    """
+    state = ls["node_state"].get(node_id, {})
+    if state.get("status") not in ("needs_review", "mastered"):
+        return
+
+    result = state.get("last_feedback") or {}
+    score = float(result.get("score", 0.0) or 0.0)
+    feedback = _feedback_text(result)
+
+    agent = st.session_state.get("adaptation_agent")
+    if agent is None:
+        from agents.adaptation.adaptation_agent import AdaptationAgent
+        agent = AdaptationAgent(push_to_langsmith=False)
+        st.session_state.adaptation_agent = agent
+
+    logger.info("UI: adapting graph after grade on node %s (score=%.0f)", node_id, score)
+    adaptation = agent.adapt(json.dumps(ls["skill_graph"]), node_id, score, feedback)
+    if adaptation is None:
+        return
+
+    from graph.skill_graph_adapt import apply_adaptation
+    new_graph, new_ids = apply_adaptation(ls["skill_graph"], adaptation)
+    ls["skill_graph"] = new_graph
+    for nid in new_ids:
+        ls["node_state"].setdefault(nid, _default_node_state())
+
+    focus = list(adaptation.remediation_focus or [])
+    if focus:
+        # Record the gaps on the graded node and drop its cached lesson so the next open
+        # regenerates score-aware content (weaknesses -> prior_feedback -> generate_content remediation).
+        # Also clear last_feedback: the regenerated lesson carries a DIFFERENT exercise, so the old
+        # grade panel would otherwise render a stale, mismatched result against the new harness.
+        ls["node_state"][node_id] = {**state, "weaknesses": focus, "last_feedback": None}
+        ls["lessons"].pop(node_id, None)
 
 
 # CSS for better styling
@@ -237,6 +308,21 @@ def _node_label_map(skill_graph: dict) -> dict:
     return {n["id"]: n.get("label", n["id"]) for n in skill_graph.get("nodes", [])}
 
 
+# Picker ordering: foundational -> intermediate -> advanced. Phase 3 appends remedial nodes to the
+# end of the nodes list, which left them dangling at the bottom of the selectbox even though they sit
+# early (as new prerequisites) in the graph. Sorting by level rank (stable within a level, so the
+# original consensus order is preserved) realigns the picker with the graph's reading order.
+_LEVEL_RANK = {"foundational": 0, "intermediate": 1, "advanced": 2}
+
+
+def _ordered_node_ids(skill_graph: dict) -> list:
+    nodes = skill_graph.get("nodes", [])
+    return [
+        n["id"]
+        for n in sorted(nodes, key=lambda n: _LEVEL_RANK.get((n.get("level") or "").lower(), 1))
+    ]
+
+
 def run_lesson(node: dict, format_type: str, prior_weaknesses: list):
     """Run the lesson graph for one clicked skill node (content + exercise). Sync wrapper."""
     loop = asyncio.new_event_loop()
@@ -294,7 +380,7 @@ def render_learning_session():
     st.divider()
     st.subheader("📖 Study a Skill")
     label_by_id = _node_label_map(skill_graph)
-    node_ids = list(label_by_id.keys())
+    node_ids = _ordered_node_ids(skill_graph)
     selected_id = st.selectbox(
         "Pick a skill to study",
         node_ids,

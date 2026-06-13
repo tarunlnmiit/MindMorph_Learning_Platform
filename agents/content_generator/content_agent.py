@@ -55,15 +55,17 @@ class ContentAgent:
         system_prompt = CONTENT_PROMPTS.get(format_type.upper(), CONTENT_PROMPTS["C"])
 
         # Score-aware regeneration: steer the lesson at the learner's specific gaps.
-        # Phase 3 note: when real LLM-generated weaknesses feed in here, escape any literal
-        # `{`/`}` before this string reaches SystemMessagePromptTemplate.from_template (below),
-        # or they'll be parsed as template variables. Today `remediation` is always None.
+        # Phase 3: `remediation` now carries real LLM-generated weaknesses, which for a coding
+        # platform routinely contain literal `{`/`}` (dict/set literals, f-strings, generics).
+        # Escape them before the string reaches SystemMessagePromptTemplate.from_template (below),
+        # or they're parsed as template variables and format_messages raises.
         if remediation:
+            safe_remediation = remediation.replace("{", "{{").replace("}", "}}")
             system_prompt = (
                 f"{system_prompt}\n\n"
                 "REMEDIAL FOCUS: the learner previously struggled with the following gaps. "
                 "Emphasize and reteach these explicitly, with extra examples:\n"
-                f"{remediation}"
+                f"{safe_remediation}"
             )
 
         try:
