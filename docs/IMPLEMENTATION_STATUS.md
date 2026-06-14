@@ -124,8 +124,16 @@ Each item notes the **architecture section** it satisfies and the **code gap** i
     `graph/lesson_graph.py`, `agents/adaptation/`, `graph/skill_graph_adapt.py` (deterministic,
     id-stable merge). State lives in `st.session_state.learning_session` (maps 1:1 to P1 #6 tables).
     Deferred to #6: Postgres/Redis persistence of `node_state`/`lessons`.
-6. **Persistence + backend** — FastAPI service layer; Pinecone (long-term) + Redis (short-term)
-   memory; PostgreSQL for user/progress. *Satisfies:* §5.2, §5.4. *Closes:* stateless prototype.
+6. ✅ **Persistence + backend** — **FastAPI** service (`api/`) exposes the loop over HTTP (create session /
+   list / get / open lesson / grade), each endpoint load→service→save. Loop logic extracted Streamlit-free
+   into `services/` (mastery, completion, orchestration). **Postgres** persistence via the Repository pattern
+   (`persistence/`): a `learning_session` stored as one JSONB row keyed by `(user_id, session_id)` —
+   Alembic migration + `docker-compose.yml`. An in-memory repo (`MINDMORPH_STORE=memory`) backs zero-infra
+   tests/dev. MVP user id = caller-supplied (no auth yet). **Verified on real Postgres:** create → open
+   lesson → grade (→ adaptation, 6→8 nodes) → **killed + rebooted the process → GET returned the graded
+   state intact** (cross-process durability proof); DB-gated integration test guards the JSONB path. 108
+   tests green. *Deferred:* Redis (JSONB suffices at prototype scale); re-pointing Streamlit at the API
+   (#12 retires it); Pinecone. *Satisfies:* §5.2, §5.4. *Closes:* the stateless prototype.
 7. **RAG + Model Router** — grounding pipelines and multi-vendor routing. *Satisfies:* §5.3, §5.7.
 
 ### P2 — Personalization & ingestion
@@ -135,7 +143,16 @@ Each item notes the **architecture section** it satisfies and the **code gap** i
 ### P3 — Full product surface
 10. **AI Teaching Assistant** (chat + voice: Whisper STT, ElevenLabs TTS). *Satisfies:* §2.
 11. **Screen Vision + Browser Automation agents.** *Satisfies:* §2.
-12. **Next.js 14 / React 18 frontend** replacing Streamlit; JupyterLite sandboxes. *Satisfies:* §5.1.
+12. 🟡 **Next.js 15 / React 19 frontend** (`web/`) — brought forward alongside #6 (it's what justifies
+    the HTTP backend). Dark-luxury UI consuming the FastAPI API via TanStack Query: localStorage login,
+    session list/resume, **react-flow skill graph with real clickable nodes** (the upgrade the Streamlit
+    iframe couldn't do), status-colored + prereq-locked nodes, lesson view (react-markdown), **Monaco**
+    code editor, live grade → mastery re-color + adaptation. Build + typecheck green; Playwright E2E
+    (mocked API) covers the full loop + lock gate. **Verified live against the real FastAPI + Postgres:**
+    login → the persisted adapted session loads through all layers and the 8-node graph renders (CORS
+    preflight + read path proven; browser-driven grade is the one chain not re-run, its parts covered by
+    curl write + mocked-client E2E). *Deferred:* JupyterLite sandboxes; retiring Streamlit (kept until
+    full parity). *Satisfies:* §5.1.
 13. **Infra, analytics, security layers** — K8s/Terraform, Kafka/Airflow/BigQuery, Auth0/RBAC/encryption.
     *Satisfies:* §5.5, §5.6, §5.8.
 

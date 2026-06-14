@@ -1,0 +1,24 @@
+# Local Postgres for MindMorph persistence (P1 #6).
+#   docker compose up -d db
+# Matches the default DATABASE_URL in config.py:
+#   postgresql+psycopg://mindmorph:mindmorph@localhost:5432/mindmorph
+services:
+  db:
+    image: postgres:16
+    container_name: mindmorph-db
+    environment:
+      POSTGRES_USER: mindmorph
+      POSTGRES_PASSWORD: mindmorph
+      POSTGRES_DB: mindmorph
+    ports:
+      - "5432:5432"
+    volumes:
+      - mindmorph_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mindmorph"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  mindmorph_pgdata:

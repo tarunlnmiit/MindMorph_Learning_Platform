@@ -1,0 +1,88 @@
+@import "tailwindcss";
+
+/* ── MindMorph — dark luxury ───────────────────────────────────────────────
+   Deep ink surfaces with layered elevation, a restrained warm-gold accent, and
+   semantic mastery colors that glow. The skill graph is treated as a map you
+   explore, so depth (surfaces + glow) carries hierarchy rather than bright fills. */
+
+@theme {
+  --color-ink-900: oklch(16% 0.012 270);
+  --color-ink-850: oklch(19% 0.014 270);
+  --color-ink-800: oklch(22% 0.016 270);
+  --color-ink-700: oklch(28% 0.018 270);
+  --color-ink-600: oklch(36% 0.02 270);
+
+  --color-text-strong: oklch(96% 0.005 270);
+  --color-text: oklch(82% 0.012 270);
+  --color-text-muted: oklch(64% 0.014 270);
+
+  --color-gold: oklch(80% 0.12 85);
+  --color-gold-dim: oklch(70% 0.1 85);
+
+  /* Semantic mastery states */
+  --color-mastered: oklch(78% 0.14 165);
+  --color-progress: oklch(80% 0.13 80);
+  --color-review: oklch(72% 0.17 25);
+  --color-blocked: oklch(55% 0.02 270);
+  --color-available: oklch(72% 0.1 270);
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+
+  --radius-card: 16px;
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(1200px 600px at 15% -10%, oklch(24% 0.03 285 / 0.5), transparent 60%),
+    radial-gradient(1000px 500px at 110% 10%, oklch(24% 0.04 85 / 0.18), transparent 55%),
+    var(--color-ink-900);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Reusable elevated surface */
+.surface {
+  background: linear-gradient(180deg, var(--color-ink-800), var(--color-ink-850));
+  border: 1px solid oklch(100% 0 0 / 0.06);
+  border-radius: var(--radius-card);
+  box-shadow:
+    0 1px 0 0 oklch(100% 0 0 / 0.04) inset,
+    0 20px 40px -24px oklch(0% 0 0 / 0.8);
+}
+
+.accent-ring:focus-visible {
+  outline: 2px solid var(--color-gold);
+  outline-offset: 2px;
+}
+
+/* Subtle gold underline for primary headings */
+.eyebrow {
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  font-size: 0.7rem;
+  color: var(--color-gold-dim);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* react-flow dark theming overrides */
+.react-flow__attribution {
+  display: none;
+}

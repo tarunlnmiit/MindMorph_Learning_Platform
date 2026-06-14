@@ -121,3 +121,23 @@ def test_logging_config_imports_clean():
     # Importing the logging config must not configure handlers or write any log line.
     out = _import_output("logging_config")
     assert "Logging configured" not in out
+
+
+def test_services_import_clean():
+    # The Streamlit-free service layer must import without building any graph/agent (those are lazy).
+    out = _import_output("services.learning_service")
+    assert "building orchestration graph" not in out
+    assert "building lesson graph" not in out
+
+
+def test_persistence_import_no_db_connection():
+    # Importing the repository must not open a DB connection (engine creation is lazy).
+    out = _import_output("persistence.repository")
+    assert "creating engine" not in out
+
+
+def test_api_import_clean():
+    # Importing the FastAPI app wires routes but must not run orchestration or open the DB.
+    out = _import_output("api.main")
+    assert "building orchestration graph" not in out
+    assert "creating engine" not in out
