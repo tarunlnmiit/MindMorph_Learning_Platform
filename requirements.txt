@@ -9,5 +9,12 @@ python-dotenv
 streamlit
 streamlit-ace
 ddgs
+# Persistence + API layer (P1 #6)
+fastapi
+uvicorn[standard]
+sqlalchemy>=2
+psycopg[binary]
+alembic
+httpx
 pytest
 pytest-asyncio

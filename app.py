@@ -1,6 +1,5 @@
 import streamlit as st
 import asyncio
-import json
 import logging
 import os
 import sys
@@ -25,9 +24,26 @@ from graph.lesson_graph import build_lesson_graph
 from graph.skill_graph_render import skill_graph_to_mermaid
 from streamlit_ace import st_ace
 
-# Mastery thresholds (Phase 2): score → node status.
-MASTERY_THRESHOLD = 80   # >= mastered
-REVIEW_THRESHOLD = 50    # >= in_progress, below ⇒ needs_review
+# Loop logic now lives in the Streamlit-free service layer (services/). app.py imports it so the UI
+# and the FastAPI service share identical code. Underscore aliases below preserve the public names the
+# existing test suite imports from `app` (tests/test_mastery_capture.py, tests/test_completion_gating.py).
+from services.mastery import (
+    MASTERY_THRESHOLD,
+    REVIEW_THRESHOLD,
+    apply_score as _apply_score,
+    default_node_state as _default_node_state,
+    feedback_text as _feedback_text,
+)
+from services.completion import (
+    node_label_map as _node_label_map,
+    ordered_node_ids as _ordered_node_ids,
+    prereqs_by_node as _prereqs_by_node,
+    complete_node_ids as _complete_node_ids,
+    locked_node_ids as _locked_node_ids,
+    incomplete_prereq_labels as _incomplete_prereq_labels,
+    display_status as _display_status,
+)
+from services.learning_service import adapt_after_grade as _adapt_after_grade
 
 
 def render_mermaid(mermaid_code: str, height: int = 520):
@@ -158,92 +174,8 @@ def _render_grade_result(fmt: str, result):
             st.markdown(f"**Feedback:** {result['feedback']}")
 
 
-def _apply_score(ls: dict, node_id: str, fmt: str, result: dict) -> None:
-    """Phase 2 — write a grade result into learning_session['node_state'][node_id].
-
-    Pure state update (builds a new node_state entry, no Streamlit calls) so it's unit-testable
-    without a Streamlit context. Both coding_challenge and case_study expose 'score' (0–100).
-    """
-    score = float(result.get("score", 0.0) or 0.0)
-    old = ls["node_state"].get(node_id, {})
-    best_score = max(old.get("best_score", 0), score)
-    # Mastery is sticky: once best_score clears the bar the node stays mastered even after a worse
-    # retry. in_progress/needs_review track the latest attempt so genuine struggle still surfaces.
-    if best_score >= MASTERY_THRESHOLD:
-        status = "mastered"
-    elif score >= REVIEW_THRESHOLD:
-        status = "in_progress"
-    else:
-        status = "needs_review"
-    ls["node_state"][node_id] = {
-        **old,
-        "status": status,
-        "best_score": best_score,
-        "attempts": old.get("attempts", 0) + 1,
-        "weaknesses": old.get("weaknesses", []),  # Phase 3 fills remediation_focus
-        "last_feedback": result,
-    }
-
-
-def _default_node_state() -> dict:
-    """Fresh node_state entry (matches the SCOUT-init shape) for newly added remedial nodes."""
-    return {"status": "available", "best_score": 0, "attempts": 0, "weaknesses": [], "last_feedback": None}
-
-
-def _feedback_text(result: dict | None) -> str:
-    """Flatten a grade result into a short text blob the Adaptation agent can read as gaps."""
-    if not result:
-        return ""
-    parts: list[str] = []
-    for f in result.get("failures", []) or []:
-        parts.append(str(f))
-    if result.get("feedback"):
-        parts.append(str(result["feedback"]))
-    for line in result.get("per_criterion", []) or []:
-        parts.append(str(line))
-    return "\n".join(parts)[:2000]  # cap: keep the adaptation prompt bounded
-
-
-def _adapt_after_grade(ls: dict, node_id: str) -> None:
-    """Phase 3 — close the loop: a graded node mutates the graph (remedial nodes / unlock edges)
-    and, on a low score, invalidates the cached lesson so the next open regenerates against the gaps.
-
-    Runs only when the latest grade pushed the node to needs_review or mastered. LLM-backed; any
-    failure is swallowed (the grade + mastery already persisted — adaptation is best-effort).
-    """
-    state = ls["node_state"].get(node_id, {})
-    if state.get("status") not in ("needs_review", "mastered"):
-        return
-
-    result = state.get("last_feedback") or {}
-    score = float(result.get("score", 0.0) or 0.0)
-    feedback = _feedback_text(result)
-
-    agent = st.session_state.get("adaptation_agent")
-    if agent is None:
-        from agents.adaptation.adaptation_agent import AdaptationAgent
-        agent = AdaptationAgent(push_to_langsmith=False)
-        st.session_state.adaptation_agent = agent
-
-    logger.info("UI: adapting graph after grade on node %s (score=%.0f)", node_id, score)
-    adaptation = agent.adapt(json.dumps(ls["skill_graph"]), node_id, score, feedback)
-    if adaptation is None:
-        return
-
-    from graph.skill_graph_adapt import apply_adaptation
-    new_graph, new_ids = apply_adaptation(ls["skill_graph"], adaptation)
-    ls["skill_graph"] = new_graph
-    for nid in new_ids:
-        ls["node_state"].setdefault(nid, _default_node_state())
-
-    focus = list(adaptation.remediation_focus or [])
-    if focus:
-        # Record the gaps on the graded node and drop its cached lesson so the next open
-        # regenerates score-aware content (weaknesses -> prior_feedback -> generate_content remediation).
-        # Also clear last_feedback: the regenerated lesson carries a DIFFERENT exercise, so the old
-        # grade panel would otherwise render a stale, mismatched result against the new harness.
-        ls["node_state"][node_id] = {**state, "weaknesses": focus, "last_feedback": None}
-        ls["lessons"].pop(node_id, None)
+# Mastery capture (_apply_score / _default_node_state / _feedback_text) and graph adaptation
+# (_adapt_after_grade) now live in services/ — imported and aliased at the top of this file.
 
 
 # CSS for better styling
@@ -303,110 +235,9 @@ async def run_market_analysis(query: str, location: str = "United States"):
     return None
 
 
-def _node_label_map(skill_graph: dict) -> dict:
-    """Map node_id -> label for the skill picker (ids are unique; labels may repeat)."""
-    return {n["id"]: n.get("label", n["id"]) for n in skill_graph.get("nodes", [])}
-
-
-# Picker ordering: foundational -> intermediate -> advanced. Phase 3 appends remedial nodes to the
-# end of the nodes list, which left them dangling at the bottom of the selectbox even though they sit
-# early (as new prerequisites) in the graph. Sorting by level rank (stable within a level, so the
-# original consensus order is preserved) realigns the picker with the graph's reading order.
-_LEVEL_RANK = {"foundational": 0, "intermediate": 1, "advanced": 2}
-
-
-def _ordered_node_ids(skill_graph: dict) -> list:
-    nodes = skill_graph.get("nodes", [])
-    return [
-        n["id"]
-        for n in sorted(nodes, key=lambda n: _LEVEL_RANK.get((n.get("level") or "").lower(), 1))
-    ]
-
-
-# --- Prerequisite-gated completion ------------------------------------------------------------
-# Per-node mastery (best_score >= 80, sticky) is the underlying truth. "Complete" is derived: a node
-# counts as complete only when it AND all its prerequisites (transitively) are mastered. A node that
-# passed its own exercise but still has an incomplete prerequisite renders 🔒 ("blocked"), not ✅, and
-# is excluded from the progress count — so completion reflects the whole dependency chain.
-
-
-def _prereqs_by_node(skill_graph: dict) -> dict:
-    """Map node_id -> set of its prerequisite ids. Edge convention (SkillEdge): source = prerequisite,
-    target = the skill that depends on it. So prereqs of X = sources of edges whose target is X."""
-    prereqs: dict = {n["id"]: set() for n in skill_graph.get("nodes", [])}
-    for e in skill_graph.get("edges", []) or []:
-        src, tgt = e.get("source"), e.get("target")
-        if tgt in prereqs and src is not None:
-            prereqs[tgt].add(src)
-    return prereqs
-
-
-def _complete_node_ids(skill_graph: dict, node_state: dict) -> set:
-    """Set of node ids that are fully complete: mastered AND every prerequisite complete (recursive).
-
-    Memoized with a cycle guard — a node currently being resolved is treated as not-complete, so a
-    cyclic graph returns instead of recursing forever (the graph is meant to be acyclic).
-    """
-    prereqs = _prereqs_by_node(skill_graph)
-
-    def _is_mastered(nid: str) -> bool:
-        return node_state.get(nid, {}).get("status") == "mastered"
-
-    memo: dict = {}
-    visiting: set = set()
-
-    def _complete(nid: str) -> bool:
-        if nid in memo:
-            return memo[nid]
-        if nid in visiting:  # cycle: don't recurse, count as not-complete
-            return False
-        if not _is_mastered(nid):
-            memo[nid] = False
-            return False
-        visiting.add(nid)
-        result = all(_complete(p) for p in prereqs.get(nid, set()))
-        visiting.discard(nid)
-        memo[nid] = result
-        return result
-
-    return {nid for nid in prereqs if _complete(nid)}
-
-
-def _locked_node_ids(skill_graph: dict, node_state: dict) -> set:
-    """Set of node ids that are LOCKED: at least one direct prerequisite is not complete.
-
-    A learner may not open a locked node's lesson. Transitivity is automatic — completion is
-    transitive, so a node downstream of an unmastered node has an incomplete prerequisite and is
-    locked too. Root nodes (no prerequisites) and complete nodes are never locked.
-    """
-    complete = _complete_node_ids(skill_graph, node_state)
-    prereqs = _prereqs_by_node(skill_graph)
-    return {nid for nid, ps in prereqs.items() if any(p not in complete for p in ps)}
-
-
-def _incomplete_prereq_labels(skill_graph: dict, node_state: dict, node_id: str) -> list:
-    """Labels of a node's direct prerequisites that are not yet complete (for the lock message)."""
-    complete = _complete_node_ids(skill_graph, node_state)
-    label_by_id = _node_label_map(skill_graph)
-    prereqs = _prereqs_by_node(skill_graph).get(node_id, set())
-    return [label_by_id.get(p, p) for p in prereqs if p not in complete]
-
-
-def _display_status(skill_graph: dict, node_state: dict) -> dict:
-    """node_id -> status handed to the renderer. Complete -> 'mastered' (✅); any node with an
-    incomplete prerequisite (locked) -> 'blocked' (🔒); otherwise the underlying status (unchanged).
-    The mastered-but-prereq-pending case is a subset of locked, so its 🔒 behavior is preserved."""
-    complete = _complete_node_ids(skill_graph, node_state)
-    locked = _locked_node_ids(skill_graph, node_state)
-    out: dict = {}
-    for nid, s in node_state.items():
-        if nid in complete:
-            out[nid] = "mastered"
-        elif nid in locked:
-            out[nid] = "blocked"
-        else:
-            out[nid] = s.get("status")
-    return out
+# Node-picker ordering (_node_label_map / _ordered_node_ids) and prerequisite-gated completion
+# (_prereqs_by_node / _complete_node_ids / _locked_node_ids / _incomplete_prereq_labels /
+# _display_status) now live in services/completion.py — imported and aliased at the top of this file.
 
 
 def run_lesson(node: dict, format_type: str, prior_weaknesses: list):

@@ -124,8 +124,15 @@ Each item notes the **architecture section** it satisfies and the **code gap** i
     `graph/lesson_graph.py`, `agents/adaptation/`, `graph/skill_graph_adapt.py` (deterministic,
     id-stable merge). State lives in `st.session_state.learning_session` (maps 1:1 to P1 #6 tables).
     Deferred to #6: Postgres/Redis persistence of `node_state`/`lessons`.
-6. **Persistence + backend** — FastAPI service layer; Pinecone (long-term) + Redis (short-term)
-   memory; PostgreSQL for user/progress. *Satisfies:* §5.2, §5.4. *Closes:* stateless prototype.
+6. 🟡 **Persistence + backend** — *Phase A in progress.* **FastAPI** service (`api/`) exposes the
+   loop over HTTP (create session / list / get / open lesson / grade), each endpoint load→service→save.
+   Loop logic extracted Streamlit-free into `services/` (mastery, completion, orchestration). **Postgres**
+   persistence via the Repository pattern (`persistence/`): a `learning_session` stored as one JSONB row
+   keyed by `(user_id, session_id)` — Alembic migration + `docker-compose.yml`. An in-memory repo
+   (`MINDMORPH_STORE=memory`) backs zero-infra tests/dev. MVP user id = caller-supplied (no auth yet).
+   Verified live: real `POST /sessions` → 6-node graph persisted → GET/list round-trip; 107 tests green.
+   *Deferred:* Redis (JSONB suffices at prototype scale); re-pointing Streamlit at the API (Phase B
+   retires it); Pinecone. *Satisfies:* §5.2, §5.4. *Closes:* stateless prototype.
 7. **RAG + Model Router** — grounding pipelines and multi-vendor routing. *Satisfies:* §5.3, §5.7.
 
 ### P2 — Personalization & ingestion
