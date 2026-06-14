@@ -16,6 +16,7 @@ export default function SessionPage() {
   const sessionId = String(useParams().sessionId);
   const qc = useQueryClient();
   const [lockMsg, setLockMsg] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const key = ["session", userId, sessionId];
 
@@ -31,9 +32,13 @@ export default function SessionPage() {
 
   const open = useMutation({
     mutationFn: (nodeId: string) => api.openLesson(userId!, sessionId, nodeId),
-    onSuccess: writeBack,
+    onSuccess: (res) => {
+      writeBack(res);
+      setErrorMsg(null);
+    },
     onError: (e) => {
       if (e instanceof LockedError) setLockMsg(`Locked — first complete: ${e.pending.join(", ")}`);
+      else setErrorMsg(e.message); // e.g. 503 generation rate-limited — show "try again", not a crash
     },
   });
 
@@ -41,6 +46,7 @@ export default function SessionPage() {
     mutationFn: ({ nodeId, solution }: { nodeId: string; solution: string }) =>
       api.grade(userId!, sessionId, nodeId, solution),
     onSuccess: writeBack,
+    onError: (e) => setErrorMsg(e.message),
   });
 
   if (ready && !userId) {
@@ -81,6 +87,7 @@ export default function SessionPage() {
           session={session}
           onOpen={(nodeId, locked) => {
             setLockMsg(null);
+            setErrorMsg(null);
             if (locked) {
               setLockMsg(
                 `Locked — first complete: ${incompletePrereqLabels(session.skill_graph, session.node_state, nodeId).join(", ")}`,
@@ -96,6 +103,14 @@ export default function SessionPage() {
             style={{ color: "var(--color-blocked)", borderColor: "var(--color-blocked)" }}
           >
             🔒 {lockMsg}
+          </p>
+        )}
+        {errorMsg && (
+          <p
+            className="mt-3 rounded-lg border px-4 py-2 text-sm"
+            style={{ color: "var(--color-review)", borderColor: "var(--color-review)" }}
+          >
+            ⚠️ {errorMsg}
           </p>
         )}
         {open.isPending && <p className="mt-3 text-sm text-text-muted">Composing lesson…</p>}
