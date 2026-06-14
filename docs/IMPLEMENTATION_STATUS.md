@@ -134,7 +134,14 @@ Each item notes the **architecture section** it satisfies and the **code gap** i
    state intact** (cross-process durability proof); DB-gated integration test guards the JSONB path. 108
    tests green. *Deferred:* Redis (JSONB suffices at prototype scale); re-pointing Streamlit at the API
    (#12 retires it); Pinecone. *Satisfies:* §5.2, §5.4. *Closes:* the stateless prototype.
-7. **RAG + Model Router** — grounding pipelines and multi-vendor routing. *Satisfies:* §5.3, §5.7.
+7. 🟡 **Model Router** (RAG still ⛔) — `llm_providers.py` + `config.get_chat_model(tier)`: Groq stays
+   primary; on a primary failure (e.g. Groq free-tier **TPM 413**) it falls back to the **local Claude
+   Code CLI** driven headless (`claude -p`, Haiku for default agents / Sonnet for complex). Composes
+   through `with_structured_output` via LangChain `with_fallbacks`. Toggle `MINDMORPH_LLM_FALLBACK`
+   (`claude_cli` default | `none`). **Placeholder** — the CLI uses the local Claude Code OAuth session
+   (local-dev only, not deployable); swap in `langchain-anthropic` once an API key exists, agents
+   unchanged. Structured-output-over-CLI verified live (real Haiku → parseable JSON). RAG/grounding +
+   multi-vendor HTTP routing still open. *Satisfies (partial):* §5.3, §5.7.
 
 ### P2 — Personalization & ingestion
 8. **Onboarding + Dynamic Skill Assessment** (social sign-in, MCQ assessment). *Satisfies:* §2.

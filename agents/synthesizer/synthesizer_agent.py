@@ -16,7 +16,7 @@ from langchain_core.prompts import (
     HumanMessagePromptTemplate,
 )
 
-from config import llm
+from config import get_chat_model
 from prompts.synthesizer_prompt import SYNTHESIZER_SYSTEM_PROMPT
 
 _HUMAN_TEMPLATE = """Topic: {user_query}
@@ -34,7 +34,7 @@ class SynthesizerAgent:
     '''Merges a creative draft with factual findings into the final lesson.'''
 
     def __init__(self, push_to_langsmith: bool = False):
-        self.llm = llm
+        self.llm = get_chat_model("complex")  # large free-text merge → Sonnet on fallback
         system_template = SystemMessagePromptTemplate.from_template(SYNTHESIZER_SYSTEM_PROMPT)
         human_template = HumanMessagePromptTemplate.from_template(_HUMAN_TEMPLATE)
         self.chat_prompt = ChatPromptTemplate.from_messages([system_template, human_template])

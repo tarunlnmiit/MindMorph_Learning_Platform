@@ -17,7 +17,7 @@ from langchain_core.prompts import (
     HumanMessagePromptTemplate,
 )
 
-from config import llm
+from config import get_chat_model
 from prompts.exercise_synthesizer_prompt import EXERCISE_SYNTHESIZER_SYSTEM_PROMPT
 
 _HUMAN_TEMPLATE = """Learner goal: {user_query}
@@ -41,7 +41,7 @@ class ExerciseSynthesizerAgent:
     """Personalizes gathered material into a single practice exercise statement."""
 
     def __init__(self, push_to_langsmith: bool = False):
-        self.llm = llm
+        self.llm = get_chat_model("complex")  # the call that hit the Groq 413 → Sonnet on fallback
         system_template = SystemMessagePromptTemplate.from_template(EXERCISE_SYNTHESIZER_SYSTEM_PROMPT)
         human_template = HumanMessagePromptTemplate.from_template(_HUMAN_TEMPLATE)
         self.chat_prompt = ChatPromptTemplate.from_messages([system_template, human_template])
