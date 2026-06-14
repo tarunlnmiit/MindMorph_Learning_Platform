@@ -19,3 +19,9 @@ graphify-out/
 
 # Local-only planning doc (not tracked)
 docs/ADAPTIVE_LOOP_PLAN.md
+
+# Local-only commercialization doc (not tracked)
+docs/COMMERCIALIZATION.md
+
+# Serena MCP local tooling cache
+.serena/
