@@ -4,7 +4,7 @@ The abstract ``LearningSessionRepository`` is the only interface the service/API
 the Postgres engine stays swappable (a future Redis/in-memory impl, or a different DB, drops in without
 touching callers). The Postgres implementation persists each session as a single JSONB row.
 """
-import copy
+import json
 import logging
 import os
 from abc import ABC, abstractmethod
@@ -106,8 +106,10 @@ class InMemoryLearningSessionRepository(LearningSessionRepository):
     """Process-local store (no infra). Doubles as the test store and a dev fallback when no Postgres
     is available. NOT durable across process restarts — use Postgres for real persistence.
 
-    Stored dicts are deep-copied on the way in and out, matching the serialize/deserialize boundary of
-    the JSONB store: callers cannot mutate persisted state by holding a reference.
+    Stored dicts are round-tripped through ``json.dumps/loads`` (NOT deepcopy) on the way in: this both
+    isolates persisted state from caller mutation AND faithfully mirrors the JSONB store — a value the
+    real Postgres column would reject (a Pydantic model, datetime, set …) raises here too, so the dev
+    store can't pass something production would fail on.
     """
 
     def __init__(self) -> None:
@@ -115,14 +117,14 @@ class InMemoryLearningSessionRepository(LearningSessionRepository):
 
     def get(self, user_id: str, session_id: str) -> Optional[dict]:
         row = self._store.get((user_id, session_id))
-        return copy.deepcopy(row["data"]) if row is not None else None
+        return json.loads(row["data"]) if row is not None else None
 
     def save(self, user_id: str, session_id: str, ls: dict, title: Optional[str] = None) -> None:
         key = (user_id, session_id)
         existing = self._store.get(key)
         kept_title = existing["title"] if (existing and not title) else (title or "")
         self._store[key] = {
-            "data": copy.deepcopy(ls),
+            "data": json.dumps(ls),  # raises TypeError on any non-JSON-serializable value (like JSONB)
             "title": kept_title,
             "updated_at": datetime.now(timezone.utc),
         }
