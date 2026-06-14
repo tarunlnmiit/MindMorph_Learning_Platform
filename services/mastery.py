@@ -6,13 +6,26 @@ and the FastAPI service. Unit-tested via ``tests/test_mastery_capture.py`` (impo
 """
 
 # Mastery thresholds (Phase 2): score → node status.
-MASTERY_THRESHOLD = 80   # >= mastered
-REVIEW_THRESHOLD = 50    # >= in_progress, below ⇒ needs_review
+MASTERY_THRESHOLD = 80   # >= mastered (advance: unlocks downstream skills)
+# Below 80 never advances. 40–79 = "keep practicing" (retry, no structural change). Below 40 = the
+# node is rebuilt: remedial prerequisites are generated and the node is deterministically locked.
+REVIEW_THRESHOLD = 40    # >= in_progress, below ⇒ needs_review
+REMEDIATION_THRESHOLD = 40  # < this ⇒ deterministic lock + remedial-prerequisite generation
 
 
 def default_node_state() -> dict:
     """Fresh node_state entry (matches the SCOUT-init shape) for newly added remedial nodes."""
-    return {"status": "available", "best_score": 0, "attempts": 0, "weaknesses": [], "last_feedback": None}
+    return {
+        "status": "available",
+        "best_score": 0,
+        "attempts": 0,
+        "weaknesses": [],
+        "last_feedback": None,
+        # Deterministic-lock signal: set when a node is graded < REMEDIATION_THRESHOLD, so the lock
+        # holds even if the LLM adaptation that adds remedial prerequisites fails. Cleared on a ≥40 grade
+        # (and effectively released once the generated prerequisites are all complete — see completion.py).
+        "remediation_pending": False,
+    }
 
 
 def apply_score(ls: dict, node_id: str, fmt: str, result: dict) -> None:
@@ -33,6 +46,10 @@ def apply_score(ls: dict, node_id: str, fmt: str, result: dict) -> None:
         status = "in_progress"
     else:
         status = "needs_review"
+    # Deterministic lock: a sub-40 attempt flags the node so completion.py locks it regardless of
+    # whether the LLM later succeeds in adding remedial prerequisites. A ≥40 attempt clears the flag.
+    # Sticky mastery wins — a node that has ever been mastered is never re-flagged for remediation.
+    remediation_pending = score < REMEDIATION_THRESHOLD and best_score < MASTERY_THRESHOLD
     ls["node_state"][node_id] = {
         **old,
         "status": status,
@@ -40,6 +57,7 @@ def apply_score(ls: dict, node_id: str, fmt: str, result: dict) -> None:
         "attempts": old.get("attempts", 0) + 1,
         "weaknesses": old.get("weaknesses", []),  # Phase 3 fills remediation_focus
         "last_feedback": result,
+        "remediation_pending": remediation_pending,
     }
 
 

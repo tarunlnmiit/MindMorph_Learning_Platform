@@ -134,3 +134,31 @@ def test_incomplete_prereq_labels_lists_pending_prereqs():
     }
     state = {"a": {"status": "needs_review"}, "b": {"status": "available"}}
     assert _incomplete_prereq_labels(g, state, "b") == ["Alpha"]
+
+
+# --- deterministic remediation lock (sub-40 flag, independent of prereqs) ----------------------
+
+def test_remediation_pending_locks_node_with_no_prereqs():
+    # The LLM hasn't added remedial prereqs yet, but the sub-40 flag must lock the node anyway.
+    g = _graph([])
+    state = {"a": {"status": "needs_review", "remediation_pending": True},
+             "b": {"status": "available"}, "c": {"status": "available"}}
+    locked = _locked_node_ids(g, state)
+    assert "a" in locked            # flagged, no prereqs -> still locked (deterministic)
+    assert _display_status(g, state)["a"] == "blocked"
+
+
+def test_remediation_lock_holds_until_prereqs_complete():
+    g = _graph([{"source": "a", "target": "b"}])  # a is prereq of b
+    state = {"a": {"status": "available"},
+             "b": {"status": "needs_review", "remediation_pending": True},
+             "c": {"status": "available"}}
+    assert "b" in _locked_node_ids(g, state)       # prereq a not complete -> locked
+
+
+def test_remediation_lock_releases_when_prereqs_complete():
+    g = _graph([{"source": "a", "target": "b"}])
+    state = {"a": {"status": "mastered"},          # remedial prereq done
+             "b": {"status": "needs_review", "remediation_pending": True},
+             "c": {"status": "available"}}
+    assert "b" not in _locked_node_ids(g, state)   # prereqs satisfied -> node reopens despite flag

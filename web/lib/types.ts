@@ -33,6 +33,9 @@ export interface NodeState {
   attempts: number;
   weaknesses: string[];
   last_feedback: GradeResult | null;
+  // Deterministic-lock signal set by a sub-40 grade (mirrors services/mastery.py). Optional for
+  // backward-compat with sessions persisted before the field existed.
+  remediation_pending?: boolean;
 }
 
 export interface GradingArtifact {

@@ -103,7 +103,7 @@ export function SkillGraph({
   }, [session]);
 
   return (
-    <div className="surface h-[460px] overflow-hidden">
+    <div className="surface h-[560px] overflow-hidden">
       <ReactFlow
         nodes={nodes}
         edges={edges}

@@ -5,7 +5,7 @@
 
 import type { NodeStatus, SkillGraph } from "./types";
 
-type StateMap = Record<string, { status: NodeStatus }>;
+type StateMap = Record<string, { status: NodeStatus; remediation_pending?: boolean }>;
 
 export function prereqsByNode(graph: SkillGraph): Record<string, Set<string>> {
   const prereqs: Record<string, Set<string>> = {};
@@ -39,8 +39,17 @@ export function lockedNodeIds(graph: SkillGraph, state: StateMap): Set<string> {
   const complete = completeNodeIds(graph, state);
   const prereqs = prereqsByNode(graph);
   const locked = new Set<string>();
+  // (a) derived lock: a direct prerequisite is not complete.
   for (const [id, ps] of Object.entries(prereqs)) {
     if ([...ps].some((p) => !complete.has(p))) locked.add(id);
+  }
+  // (b) deterministic remediation lock (mirrors services/completion._remediation_locked): a sub-40
+  // grade set remediation_pending; locked until its remedial prereqs exist AND are all complete.
+  for (const [id, s] of Object.entries(state)) {
+    if (!s.remediation_pending) continue;
+    const ps = prereqs[id] ?? new Set<string>();
+    const satisfied = ps.size > 0 && [...ps].every((p) => complete.has(p));
+    if (!satisfied) locked.add(id);
   }
   return locked;
 }
@@ -78,7 +87,8 @@ export interface StatusStyle {
 
 export const STATUS_STYLE: Record<NodeStatus, StatusStyle> = {
   mastered: { label: "Complete", glyph: "✓", color: "var(--color-mastered)" },
-  in_progress: { label: "In progress", glyph: "◐", color: "var(--color-progress)" },
+  // 40–79: passed the floor but not the 80 bar — explicitly NOT advancement (downstream stays locked).
+  in_progress: { label: "Keep practicing", glyph: "◐", color: "var(--color-progress)" },
   needs_review: { label: "Needs review", glyph: "↻", color: "var(--color-review)" },
   blocked: { label: "Locked", glyph: "🔒", color: "var(--color-blocked)" },
   available: { label: "Available", glyph: "○", color: "var(--color-available)" },
