@@ -372,17 +372,40 @@ def _complete_node_ids(skill_graph: dict, node_state: dict) -> set:
     return {nid for nid in prereqs if _complete(nid)}
 
 
-def _display_status(skill_graph: dict, node_state: dict) -> dict:
-    """node_id -> status handed to the renderer. Mastered + complete -> 'mastered' (✅); mastered but
-    a prerequisite is incomplete -> 'blocked' (🔒); otherwise the underlying status (unchanged)."""
+def _locked_node_ids(skill_graph: dict, node_state: dict) -> set:
+    """Set of node ids that are LOCKED: at least one direct prerequisite is not complete.
+
+    A learner may not open a locked node's lesson. Transitivity is automatic — completion is
+    transitive, so a node downstream of an unmastered node has an incomplete prerequisite and is
+    locked too. Root nodes (no prerequisites) and complete nodes are never locked.
+    """
     complete = _complete_node_ids(skill_graph, node_state)
+    prereqs = _prereqs_by_node(skill_graph)
+    return {nid for nid, ps in prereqs.items() if any(p not in complete for p in ps)}
+
+
+def _incomplete_prereq_labels(skill_graph: dict, node_state: dict, node_id: str) -> list:
+    """Labels of a node's direct prerequisites that are not yet complete (for the lock message)."""
+    complete = _complete_node_ids(skill_graph, node_state)
+    label_by_id = _node_label_map(skill_graph)
+    prereqs = _prereqs_by_node(skill_graph).get(node_id, set())
+    return [label_by_id.get(p, p) for p in prereqs if p not in complete]
+
+
+def _display_status(skill_graph: dict, node_state: dict) -> dict:
+    """node_id -> status handed to the renderer. Complete -> 'mastered' (✅); any node with an
+    incomplete prerequisite (locked) -> 'blocked' (🔒); otherwise the underlying status (unchanged).
+    The mastered-but-prereq-pending case is a subset of locked, so its 🔒 behavior is preserved."""
+    complete = _complete_node_ids(skill_graph, node_state)
+    locked = _locked_node_ids(skill_graph, node_state)
     out: dict = {}
     for nid, s in node_state.items():
-        status = s.get("status")
-        if status == "mastered" and nid not in complete:
+        if nid in complete:
+            out[nid] = "mastered"
+        elif nid in locked:
             out[nid] = "blocked"
         else:
-            out[nid] = status
+            out[nid] = s.get("status")
     return out
 
 
@@ -446,34 +469,43 @@ def render_learning_session():
     st.subheader("📖 Study a Skill")
     label_by_id = _node_label_map(skill_graph)
     node_ids = _ordered_node_ids(skill_graph)
+    # Locked nodes (a prerequisite isn't complete) are prefixed 🔒 in the picker and can't be opened.
+    locked = _locked_node_ids(skill_graph, node_state)
     selected_id = st.selectbox(
         "Pick a skill to study",
         node_ids,
-        format_func=lambda i: label_by_id[i],
+        format_func=lambda i: (f"🔒 {label_by_id[i]}" if i in locked else label_by_id[i]),
         key="lesson_node_picker",
     )
     if st.button("📖 Open lesson", type="primary"):
-        ls["selected_node"] = selected_id
-        if selected_id not in ls["lessons"]:
-            node = next(n for n in nodes if n["id"] == selected_id)
-            prior_weaknesses = ls["node_state"].get(selected_id, {}).get("weaknesses", [])
-            logger.info("UI: opening lesson for node %s (%r)", selected_id, label_by_id[selected_id])
-            with st.spinner(f"Composing lesson for '{label_by_id[selected_id]}'..."):
-                try:
-                    out = run_lesson(node, ls.get("format_type", "B"), prior_weaknesses)
-                    ls["lessons"][selected_id] = {
-                        "content": out.get("content"),
-                        "exercise": {
-                            "format": out.get("exercise_format"),
-                            "statement": out.get("exercise_statement"),
-                            "grading_artifact": out.get("grading_artifact"),
-                        },
-                    }
-                except Exception as e:
-                    logger.exception("UI: lesson generation failed for node %s", selected_id)
-                    st.error(f"Lesson generation failed: {e}")
-        # No st.rerun(): the button press already triggered this run; on success we fall
-        # through to render the just-cached lesson below, and on failure the error stays visible.
+        if selected_id in locked:
+            # Gate access: don't open a locked lesson; tell the learner what to finish first.
+            # selected_node is left unchanged so no stale lesson renders below.
+            pending = _incomplete_prereq_labels(skill_graph, node_state, selected_id)
+            logger.info("UI: blocked locked lesson %s (pending=%s)", selected_id, pending)
+            st.warning("🔒 Locked — first complete: " + ", ".join(pending))
+        else:
+            ls["selected_node"] = selected_id
+            if selected_id not in ls["lessons"]:
+                node = next(n for n in nodes if n["id"] == selected_id)
+                prior_weaknesses = ls["node_state"].get(selected_id, {}).get("weaknesses", [])
+                logger.info("UI: opening lesson for node %s (%r)", selected_id, label_by_id[selected_id])
+                with st.spinner(f"Composing lesson for '{label_by_id[selected_id]}'..."):
+                    try:
+                        out = run_lesson(node, ls.get("format_type", "B"), prior_weaknesses)
+                        ls["lessons"][selected_id] = {
+                            "content": out.get("content"),
+                            "exercise": {
+                                "format": out.get("exercise_format"),
+                                "statement": out.get("exercise_statement"),
+                                "grading_artifact": out.get("grading_artifact"),
+                            },
+                        }
+                    except Exception as e:
+                        logger.exception("UI: lesson generation failed for node %s", selected_id)
+                        st.error(f"Lesson generation failed: {e}")
+            # No st.rerun(): the button press already triggered this run; on success we fall
+            # through to render the just-cached lesson below, and on failure the error stays visible.
 
     # --- Render the open lesson (content + embedded exercise at the end) ---
     open_id = ls.get("selected_node")

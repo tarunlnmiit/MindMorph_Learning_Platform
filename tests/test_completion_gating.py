@@ -7,7 +7,13 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.append(ROOT)
 
-from app import _prereqs_by_node, _complete_node_ids, _display_status
+from app import (
+    _prereqs_by_node,
+    _complete_node_ids,
+    _display_status,
+    _locked_node_ids,
+    _incomplete_prereq_labels,
+)
 
 
 def _graph(edges):
@@ -81,3 +87,50 @@ def test_display_status_keeps_mastered_when_complete():
     ds = _display_status(g, state)
     assert ds["a"] == "mastered"
     assert ds["b"] == "mastered"
+
+
+# --- access locking ---------------------------------------------------------------------------
+
+def test_node_with_incomplete_prereq_is_locked():
+    g = _graph([{"source": "a", "target": "b"}])      # a is prereq of b
+    state = _state(a="available", b="available")
+    locked = _locked_node_ids(g, state)
+    assert "b" in locked                               # a not complete -> b locked
+    assert "a" not in locked                           # root, no prereqs -> open
+
+
+def test_root_and_completed_nodes_are_not_locked():
+    g = _graph([{"source": "a", "target": "b"}])
+    state = _state(a="mastered", b="available")        # a complete
+    assert _locked_node_ids(g, state) == set()         # b's only prereq complete -> open
+
+
+def test_downstream_of_unmastered_node_is_locked_transitively():
+    g = _graph([{"source": "a", "target": "b"}, {"source": "b", "target": "c"}])  # a->b->c
+    state = _state(a="mastered", b="available", c="available")
+    locked = _locked_node_ids(g, state)
+    assert "b" not in locked   # a complete -> b open
+    assert "c" in locked       # b not complete -> c locked (transitive)
+
+
+def test_locked_clears_once_chain_complete():
+    g = _graph([{"source": "a", "target": "b"}, {"source": "b", "target": "c"}])
+    state = _state(a="mastered", b="mastered", c="mastered")
+    assert _locked_node_ids(g, state) == set()
+
+
+def test_never_attempted_node_with_pending_prereq_displays_blocked():
+    g = _graph([{"source": "a", "target": "b"}])
+    state = _state(a="available", b="available")
+    ds = _display_status(g, state)
+    assert ds["b"] == "blocked"   # locked -> 🔒 even though never attempted
+    assert ds["a"] == "available"  # root, openable
+
+
+def test_incomplete_prereq_labels_lists_pending_prereqs():
+    g = {
+        "nodes": [{"id": "a", "label": "Alpha"}, {"id": "b", "label": "Beta"}],
+        "edges": [{"source": "a", "target": "b"}],
+    }
+    state = {"a": {"status": "needs_review"}, "b": {"status": "available"}}
+    assert _incomplete_prereq_labels(g, state, "b") == ["Alpha"]
