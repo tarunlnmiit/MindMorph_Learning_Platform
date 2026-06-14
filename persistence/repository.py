@@ -57,7 +57,8 @@ class PostgresLearningSessionRepository(LearningSessionRepository):
         from persistence.models import LearningSessionRow
 
         stmt = pg_insert(LearningSessionRow).values(
-            user_id=user_id, session_id=session_id, data=ls, title=title or ""
+            user_id=user_id, session_id=session_id, data=ls, title=title or "",
+            created_at=func.now(), updated_at=func.now(),
         )
         update_set = {"data": stmt.excluded.data, "updated_at": func.now()}
         if title:
