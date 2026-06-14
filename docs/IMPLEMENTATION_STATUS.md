@@ -142,7 +142,13 @@ Each item notes the **architecture section** it satisfies and the **code gap** i
 ### P3 — Full product surface
 10. **AI Teaching Assistant** (chat + voice: Whisper STT, ElevenLabs TTS). *Satisfies:* §2.
 11. **Screen Vision + Browser Automation agents.** *Satisfies:* §2.
-12. **Next.js 14 / React 18 frontend** replacing Streamlit; JupyterLite sandboxes. *Satisfies:* §5.1.
+12. 🟡 **Next.js 15 / React 19 frontend** (`web/`) — brought forward alongside #6 (it's what justifies
+    the HTTP backend). Dark-luxury UI consuming the FastAPI API via TanStack Query: localStorage login,
+    session list/resume, **react-flow skill graph with real clickable nodes** (the upgrade the Streamlit
+    iframe couldn't do), status-colored + prereq-locked nodes, lesson view (react-markdown), **Monaco**
+    code editor, live grade → mastery re-color + adaptation. Build + typecheck green; Playwright E2E
+    (mocked API) covers the full loop + lock gate. *Deferred:* JupyterLite sandboxes; retiring Streamlit
+    (kept until parity is confirmed against the live API). *Satisfies:* §5.1.
 13. **Infra, analytics, security layers** — K8s/Terraform, Kafka/Airflow/BigQuery, Auth0/RBAC/encryption.
     *Satisfies:* §5.5, §5.6, §5.8.
 
