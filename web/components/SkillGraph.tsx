@@ -11,10 +11,9 @@ import {
   ReactFlow,
 } from "@xyflow/react";
 import { useMemo } from "react";
+import { layoutSkillGraph } from "@/lib/graphLayout";
 import { STATUS_STYLE, displayStatus, lockedNodeIds } from "@/lib/status";
 import type { LearningSession, NodeStatus } from "@/lib/types";
-
-const LEVEL_RANK: Record<string, number> = { foundational: 0, intermediate: 1, advanced: 2 };
 
 type SkillNodeData = {
   label: string;
@@ -73,15 +72,14 @@ export function SkillGraph({
     const status = displayStatus(graph, session.node_state);
     const locked = lockedNodeIds(graph, session.node_state);
 
-    // Deterministic layered layout: column by level, row by order within the level.
-    const perLevel: Record<number, number> = {};
+    // Edge-aware layered layout (dagre): position by the prereq DAG, so remedial prerequisite nodes
+    // added mid-session render left of the node they unlock and the graph reflows automatically.
+    const { positions } = layoutSkillGraph(graph.nodes, graph.edges ?? []);
     const rfNodes: Node<SkillNodeData>[] = graph.nodes.map((n) => {
-      const col = LEVEL_RANK[(n.level ?? "").toLowerCase()] ?? 1;
-      const row = (perLevel[col] = (perLevel[col] ?? 0) + 1) - 1;
       return {
         id: n.id,
         type: "skill",
-        position: { x: col * 280, y: row * 120 },
+        position: positions[n.id] ?? { x: 0, y: 0 },
         data: {
           label: n.label,
           status: status[n.id] ?? "available",
