@@ -141,3 +141,9 @@ def test_api_import_clean():
     out = _import_output("api.main")
     assert "building orchestration graph" not in out
     assert "creating engine" not in out
+
+
+def test_mcp_timeout_imports_clean():
+    # The MCP timeout helper must import without touching the network or logging anything.
+    out = _import_output("tools.mcp_timeout")
+    assert "MCP timeout" not in out

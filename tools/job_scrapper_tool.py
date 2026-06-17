@@ -16,6 +16,8 @@ import json
 from config import llm
 import re
 
+from tools.mcp_timeout import with_mcp_timeout
+
 load_dotenv()
 
 logger = logging.getLogger(__name__)
@@ -42,8 +44,14 @@ class JobScraperService:
                 }
             )
             logger.info("JobScraper MCP: client initialized, fetching available tools...")
-            self.tools = await self.client.get_tools()
+            self.tools = await with_mcp_timeout(self.client.get_tools(), what="apify get_tools")
             return self.client
+        except asyncio.TimeoutError:
+            # Reset the reused client so the next request's initialize() rebuilds clean.
+            self.client = None
+            self.tools = []
+            logger.warning("JobScraper MCP: initialize timed out; client reset")
+            raise
         except Exception:
             logger.exception("JobScraper MCP: error initializing client")
             raise
@@ -67,11 +75,14 @@ class JobScraperService:
 
             logger.info("JobScraper: searching for %r in %r", query, location)
             # `limit` must be >= 10 per the actor's input schema.
-            results = await job_search_tool.ainvoke({
-                "titleSearch": query,
-                "locationSearch": location,
-                "limit": 10
-            })
+            results = await with_mcp_timeout(
+                job_search_tool.ainvoke({
+                    "titleSearch": query,
+                    "locationSearch": location,
+                    "limit": 10
+                }),
+                what="apify search_jobs",
+            )
 
             for item in results:
                 if item.get('type') != 'text':
@@ -95,6 +106,11 @@ class JobScraperService:
 
             return None
 
+        except asyncio.TimeoutError:
+            self.client = None
+            self.tools = []
+            logger.warning("JobScraper: search timed out for %r; client reset", query)
+            return None
         except StopIteration:
             logger.warning("JobScraper: %r tool is not available", self.SEARCH_TOOL_NAME)
             return None
@@ -125,11 +141,14 @@ class JobScraperService:
             )
 
             logger.info("JobScraper: retrieving results from dataset %s", dataset_id)
-            results = await get_output_tool.ainvoke({
-                "datasetId": dataset_id,
-                "limit": limit
-            })
-            
+            results = await with_mcp_timeout(
+                get_output_tool.ainvoke({
+                    "datasetId": dataset_id,
+                    "limit": limit
+                }),
+                what="apify get-dataset-items",
+            )
+
             all_jobs = []
             for item in results:
                 if item['type'] == 'text':
@@ -138,6 +157,11 @@ class JobScraperService:
             
             return all_jobs
 
+        except asyncio.TimeoutError:
+            self.client = None
+            self.tools = []
+            logger.warning("JobScraper: fetch timed out for dataset %s; client reset", dataset_id)
+            return []
         except StopIteration:
             logger.warning("JobScraper: %r tool is not available", self.OUTPUT_TOOL_NAME)
             return []
