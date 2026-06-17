@@ -152,3 +152,43 @@ def test_factory_claude_cli_wraps_in_fallback(monkeypatch):
     m = config.get_chat_model("complex")
     assert isinstance(m, FallbackChatModel)
     assert m.fallback.model == "sonnet"  # complex tier → Sonnet on fallback
+
+
+# --- multi-vendor selectable -------------------------------------------------------------------
+
+def test_provider_claude_primary_groq_fallback(monkeypatch):
+    # Claude primary + Groq fallback — true cross-vendor, Claude on the primary side.
+    monkeypatch.setenv("MINDMORPH_LLM_PROVIDER", "claude_cli")
+    monkeypatch.setenv("MINDMORPH_LLM_FALLBACK", "groq")
+    import config
+    from langchain_groq import ChatGroq
+    from llm_providers import ClaudeCLIChatModel
+    m = config.get_chat_model("complex")
+    assert isinstance(m, FallbackChatModel)
+    assert isinstance(m.primary, ClaudeCLIChatModel) and m.primary.model == "sonnet"
+    assert isinstance(m.fallback, ChatGroq)
+
+
+def test_provider_args_override_env(monkeypatch):
+    # Explicit args beat env: env says groq-primary, args force claude-only.
+    monkeypatch.setenv("MINDMORPH_LLM_PROVIDER", "groq")
+    monkeypatch.setenv("MINDMORPH_LLM_FALLBACK", "claude_cli")
+    import config
+    from llm_providers import ClaudeCLIChatModel
+    m = config.get_chat_model("default", provider="claude_cli", fallback="none")
+    assert isinstance(m, ClaudeCLIChatModel) and m.model == "haiku"
+
+
+def test_same_vendor_fallback_is_skipped(monkeypatch):
+    # A fallback equal to the primary must not wrap (no Groq→Groq).
+    monkeypatch.setenv("MINDMORPH_LLM_FALLBACK", "groq")
+    import config
+    from langchain_groq import ChatGroq
+    m = config.get_chat_model("default", provider="groq")
+    assert isinstance(m, ChatGroq)
+
+
+def test_unknown_provider_raises(monkeypatch):
+    import config
+    with pytest.raises(ValueError):
+        config.get_chat_model("default", provider="gpt5")
