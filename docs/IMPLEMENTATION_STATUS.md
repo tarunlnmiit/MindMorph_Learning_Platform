@@ -160,3 +160,10 @@ Each item notes the **architecture section** it satisfies and the **code gap** i
 - 🟡 **Test suite** — pytest started (`tests/`, 17 tests: graph routing/fan-in, content dual-path,
   skill-graph render, import side-effect guards). Still well below the 80% target.
 - ✅ Fixed the package-name typo `agents/orchertrator/` → `agents/orchestrator/`.
+- ✅ **MCP calls are timeout-bounded** — every MCP network await (`get_tools`/`ainvoke`/`search_jobs`/
+  `fetch_job_results`) is wrapped in `tools/mcp_timeout.with_mcp_timeout` (`asyncio.wait_for`, default
+  20s via `MINDMORPH_MCP_TIMEOUT`). A flapping/half-open SSE connection now degrades the market/practical
+  fan-out node to `None`/`[]` instead of wedging the whole request at the consensus fan-in; the reused
+  `JobScraperService` client is reset on timeout so the next request rebuilds clean. Removes one
+  indefinite-hang failure mode (the per-call timeout is the "gather guard" — parallelism is LangGraph's
+  fan-out, not an explicit `asyncio.gather`).

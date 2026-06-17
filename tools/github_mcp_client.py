@@ -4,6 +4,8 @@ from dotenv import load_dotenv
 import asyncio
 import os
 
+from tools.mcp_timeout import with_mcp_timeout
+
 load_dotenv()
 
 logger = logging.getLogger(__name__)
@@ -40,13 +42,18 @@ class MCPClientInitialization:
                             
             logger.info("GitHub MCP: client created, fetching available tools...")
 
-            tools = await self.client.get_tools()
+            tools = await with_mcp_timeout(self.client.get_tools(), what="github get_tools")
             logger.info("GitHub MCP: initialized with %d tool(s)", len(tools))
 
             # Full tool details only at DEBUG level (verbose).
             for tool in tools:
                 logger.debug("GitHub MCP tool: %s — %s — args=%s", tool.name, tool.description, tool.args)
 
+        except asyncio.TimeoutError:
+            # Timed out before the client is usable — drop it so a later call rebuilds.
+            self.client = None
+            logger.warning("GitHub MCP: initialize timed out; client discarded")
+            raise
         except Exception:
             logger.exception("GitHub MCP: error initializing client")
             raise
@@ -54,16 +61,20 @@ class MCPClientInitialization:
 
     async def search_github_repositories(self, query):
         try:
-            search_tool = next(tool for tool in await self.client.get_tools() if tool.name == "search_repositories")
-            result = await search_tool.ainvoke(
-                {
-                    "query": query,
-                    "perPage": 5
-                }
+            tools = await with_mcp_timeout(self.client.get_tools(), what="github get_tools")
+            search_tool = next(tool for tool in tools if tool.name == "search_repositories")
+            result = await with_mcp_timeout(
+                search_tool.ainvoke({"query": query, "perPage": 5}),
+                what="github search_repositories",
             )
             logger.info("GitHub MCP: search returned results for %r", query)
             logger.debug("GitHub MCP search results for %r:\n%s", query, result)
             return result
+        except asyncio.TimeoutError:
+            # Half-open client — discard so the next call rebuilds cleanly.
+            self.client = None
+            logger.warning("GitHub MCP: search timed out for %r; client discarded", query)
+            return None
         except StopIteration:
             logger.warning("GitHub MCP: 'search_repositories' tool is not available")
             return None
