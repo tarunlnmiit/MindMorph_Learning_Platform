@@ -18,7 +18,6 @@ export function LessonPanel({
   onGrade: (solution: string) => void;
   grading: boolean;
 }) {
-  const node = session.skill_graph.nodes.find((n) => n.id === nodeId);
   const lesson = session.lessons[nodeId];
   const [solution, setSolution] = useState("");
 
@@ -28,11 +27,11 @@ export function LessonPanel({
   const lastFeedback = session.node_state[nodeId]?.last_feedback ?? null;
 
   return (
-    <article className="surface p-7">
-      <p className="eyebrow">Lesson</p>
-      <h2 className="mt-2 text-2xl font-semibold text-text-strong">{node?.label}</h2>
+    <article className="surface p-7 md:p-10">
+      <p className="eyebrow mb-4">Lesson</p>
 
-      <div className="prose-invert mt-5 max-w-none text-text [&_a]:text-gold [&_code]:text-gold [&_h1]:text-text-strong [&_h2]:text-text-strong [&_h3]:text-text-strong [&_strong]:text-text-strong">
+      {/* The lesson markdown leads with its own <h1>, so no separate panel title (avoids duplicate). */}
+      <div className="prose prose-invert prose-lg lesson-prose max-w-none">
         {lesson.content ? (
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{lesson.content}</ReactMarkdown>
         ) : (
@@ -41,15 +40,23 @@ export function LessonPanel({
       </div>
 
       {exercise?.statement && (
-        <section className="mt-8 border-t border-white/10 pt-6">
-          <p className="eyebrow" style={{ color: "var(--color-progress)" }}>
-            Practice
-          </p>
-          <div className="prose-invert mt-3 max-w-none text-text">
+        <section className="mt-10 rounded-2xl border border-white/10 bg-ink-850/60 p-6 md:p-7">
+          <div className="mb-4 flex items-center gap-3">
+            <span
+              className="h-6 w-1 rounded-full"
+              style={{ background: "var(--color-progress)" }}
+              aria-hidden
+            />
+            <p className="eyebrow" style={{ color: "var(--color-progress)" }}>
+              Practice
+            </p>
+          </div>
+
+          <div className="prose prose-invert lesson-prose max-w-none">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{exercise.statement}</ReactMarkdown>
           </div>
 
-          <div className="mt-5">
+          <div className="mt-6">
             {isCoding ? (
               <CodeEditor value={solution} onChange={setSolution} />
             ) : (
@@ -58,7 +65,7 @@ export function LessonPanel({
                 onChange={(e) => setSolution(e.target.value)}
                 placeholder="Your analysis…"
                 aria-label="Your analysis"
-                className="accent-ring h-48 w-full rounded-xl border border-white/10 bg-ink-850 p-4 text-text-strong"
+                className="accent-ring h-48 w-full rounded-xl border border-white/10 bg-ink-900 p-4 text-text-strong"
               />
             )}
           </div>
@@ -66,7 +73,7 @@ export function LessonPanel({
           <button
             onClick={() => onGrade(solution)}
             disabled={grading || !solution.trim()}
-            className="accent-ring mt-4 rounded-xl px-5 py-2.5 font-medium text-ink-900 disabled:opacity-50"
+            className="accent-ring mt-5 rounded-xl px-6 py-2.5 font-medium text-ink-900 transition-transform hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:translate-y-0"
             style={{ background: "var(--color-gold)" }}
           >
             {grading ? "Grading…" : "Grade my submission"}

@@ -87,3 +87,33 @@ def test_missing_score_defaults_to_zero():
     _apply_score(ls, "n1", "coding_challenge", {})
     assert ls["node_state"]["n1"]["status"] == "needs_review"
     assert ls["node_state"]["n1"]["best_score"] == 0
+
+
+# --- Deterministic remediation lock (sub-40) ---------------------------------------------------
+
+def test_sub40_sets_remediation_pending():
+    ls = _ls()
+    _apply_score(ls, "n1", "coding_challenge", {"score": 30})
+    assert ls["node_state"]["n1"]["remediation_pending"] is True
+
+
+def test_40_boundary_does_not_flag():
+    # 40 is the floor of "keep practicing" (in_progress) — NOT remediation.
+    ls = _ls()
+    _apply_score(ls, "n1", "coding_challenge", {"score": REVIEW_THRESHOLD})
+    assert ls["node_state"]["n1"]["status"] == "in_progress"
+    assert ls["node_state"]["n1"]["remediation_pending"] is False
+
+
+def test_ge40_grade_clears_remediation_pending():
+    ls = _ls(remediation_pending=True, status="needs_review")
+    _apply_score(ls, "n1", "coding_challenge", {"score": 55})
+    assert ls["node_state"]["n1"]["remediation_pending"] is False
+
+
+def test_mastered_node_never_flagged_even_on_worse_retry():
+    ls = _ls()
+    _apply_score(ls, "n1", "coding_challenge", {"score": 100})  # sticky mastered
+    _apply_score(ls, "n1", "coding_challenge", {"score": 20})   # worse retry, still mastered
+    assert ls["node_state"]["n1"]["status"] == "mastered"
+    assert ls["node_state"]["n1"]["remediation_pending"] is False

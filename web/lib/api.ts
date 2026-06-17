@@ -24,13 +24,12 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     headers: { "Content-Type": "application/json" },
     ...init,
   });
-  if (res.status === 409) {
-    const body = await res.json().catch(() => ({}));
-    throw new LockedError(body?.detail?.pending ?? []);
-  }
   if (!res.ok) {
-    const text = await res.text().catch(() => res.statusText);
-    throw new Error(`API ${res.status}: ${text}`);
+    const body = await res.json().catch(() => null);
+    const detail = body?.detail;
+    if (res.status === 409) throw new LockedError(detail?.pending ?? []);
+    // 503 (and friends) carry a safe string message — surface it verbatim for the UI to show.
+    throw new Error(typeof detail === "string" ? detail : `Request failed (${res.status}).`);
   }
   return res.json() as Promise<T>;
 }

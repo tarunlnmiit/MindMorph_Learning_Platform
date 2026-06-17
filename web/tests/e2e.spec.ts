@@ -84,8 +84,8 @@ test("full loop: login → graph → lesson → grade → mastery", async ({ pag
 
   // Open the root node's lesson.
   await page.getByText("Python Basics").first().click();
-  // The lesson panel title is an h2 (markdown content adds an h1 of the same name).
-  await expect(page.getByRole("heading", { name: "Python Basics", level: 2 })).toBeVisible();
+  // The lesson leads with the markdown's own h1 (the panel no longer renders a duplicate title).
+  await expect(page.getByRole("heading", { name: "Python Basics", level: 1 })).toBeVisible();
   await expect(page.getByText("Variables hold values.")).toBeVisible();
 
   // Grade a (mocked perfect score) → node becomes complete, counter ticks to 1/2.

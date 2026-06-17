@@ -68,16 +68,35 @@ def complete_node_ids(skill_graph: dict, node_state: dict) -> set:
     return {nid for nid in prereqs if _complete(nid)}
 
 
-def locked_node_ids(skill_graph: dict, node_state: dict) -> set:
-    """Set of node ids that are LOCKED: at least one direct prerequisite is not complete.
+def _remediation_locked(skill_graph: dict, node_state: dict, complete: set) -> set:
+    """Nodes deterministically locked by a sub-40 grade (``remediation_pending``), independent of the
+    LLM. The flag locks the node UNTIL its remedial prerequisites exist AND are all complete — so a
+    node whose remediation LLM call failed (no prereqs yet) stays locked rather than slipping open.
+    A node with no prerequisites and the flag set is locked (the remediation has not landed yet)."""
+    prereqs = prereqs_by_node(skill_graph)
+    locked = set()
+    for nid, st in node_state.items():
+        if not st.get("remediation_pending"):
+            continue
+        ps = prereqs.get(nid, set())
+        satisfied = bool(ps) and all(p in complete for p in ps)
+        if not satisfied:
+            locked.add(nid)
+    return locked
 
-    A learner may not open a locked node's lesson. Transitivity is automatic — completion is
-    transitive, so a node downstream of an unmastered node has an incomplete prerequisite and is
-    locked too. Root nodes (no prerequisites) and complete nodes are never locked.
+
+def locked_node_ids(skill_graph: dict, node_state: dict) -> set:
+    """Set of node ids that are LOCKED.
+
+    Two lock sources, unioned: (a) derived — at least one direct prerequisite is not complete
+    (transitivity is automatic, since completion is transitive); (b) deterministic remediation — a
+    sub-40 grade set ``remediation_pending`` and the node's remedial prerequisites aren't yet complete.
+    A learner may not open a locked node's lesson. Root nodes (no prerequisites, no flag) are never locked.
     """
     complete = complete_node_ids(skill_graph, node_state)
     prereqs = prereqs_by_node(skill_graph)
-    return {nid for nid, ps in prereqs.items() if any(p not in complete for p in ps)}
+    derived = {nid for nid, ps in prereqs.items() if any(p not in complete for p in ps)}
+    return derived | _remediation_locked(skill_graph, node_state, complete)
 
 
 def incomplete_prereq_labels(skill_graph: dict, node_state: dict, node_id: str) -> list:

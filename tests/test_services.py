@@ -95,3 +95,71 @@ def test_grade_without_open_lesson_raises():
     ls = svc.new_learning_session(_scout_state(), "B")
     with pytest.raises(ValueError):
         svc.grade(ls, "a", "code")
+
+
+# --- threshold gating + deterministic remediation lock -----------------------------------------
+
+class _FakeAgent:
+    """Records adapt() calls and returns a canned result."""
+    def __init__(self, result=None):
+        self.result = result
+        self.calls = 0
+
+    def adapt(self, *args, **kwargs):
+        self.calls += 1
+        return self.result
+
+
+def _opened(monkeypatch, score):
+    """Build a session with node 'a' opened and grading stubbed to a fixed score."""
+    monkeypatch.setattr(svc, "_run_lesson", lambda *a, **k: {
+        "content": "c", "exercise_format": "coding_challenge",
+        "exercise_statement": "s", "grading_artifact": {"format": "coding_challenge", "unit_tests": []},
+    })
+    import agents.exercise.grader_agent as grader
+    monkeypatch.setattr(grader, "grade_submission", lambda fmt, sol, art: {"score": score})
+    ls = svc.new_learning_session(_scout_state(), "B")
+    svc.open_lesson(ls, "a")
+    return ls
+
+
+def test_grade_40_79_skips_adaptation(monkeypatch):
+    agent = _FakeAgent(result=None)
+    monkeypatch.setattr(svc, "_get_adaptation_agent", lambda: agent)
+    ls = _opened(monkeypatch, 55)
+    svc.grade(ls, "a", "sol")
+    assert ls["node_state"]["a"]["status"] == "in_progress"
+    assert agent.calls == 0  # 40–79 band makes NO adaptation call
+    assert ls["node_state"]["a"]["remediation_pending"] is False
+
+
+def test_grade_sub40_locks_even_when_adapt_returns_none(monkeypatch):
+    from services.completion import locked_node_ids
+
+    agent = _FakeAgent(result=None)  # LLM "fails" — no remedial nodes
+    monkeypatch.setattr(svc, "_get_adaptation_agent", lambda: agent)
+    ls = _opened(monkeypatch, 20)
+    svc.grade(ls, "a", "sol")
+    assert ls["node_state"]["a"]["status"] == "needs_review"
+    assert ls["node_state"]["a"]["remediation_pending"] is True
+    assert agent.calls >= 1  # attempted (with bounded retry)
+    assert "a" in locked_node_ids(ls["skill_graph"], ls["node_state"])  # locked despite None
+
+
+def test_grade_sub40_adds_remedial_prereq_and_locks(monkeypatch):
+    from agents.adaptation.adaptation_schema import GraphAdaptation
+    from agents.consensus.skill_graph_schema import SkillEdge, SkillNode
+    from services.completion import locked_node_ids
+
+    adaptation = GraphAdaptation(
+        new_nodes=[SkillNode(id="a_basics", label="A Basics", description="foundations", level="foundational")],
+        new_edges=[SkillEdge(source="a_basics", target="a", relation="prerequisite")],
+        remediation_focus=["foundations"],
+        rationale="break it down",
+    )
+    monkeypatch.setattr(svc, "_get_adaptation_agent", lambda: _FakeAgent(result=adaptation))
+    ls = _opened(monkeypatch, 20)
+    svc.grade(ls, "a", "sol")
+    assert "a_basics" in ls["node_state"]            # remedial prereq seeded
+    assert "a" in locked_node_ids(ls["skill_graph"], ls["node_state"])  # locked behind new prereq
+    assert "a" not in ls["lessons"]                  # cached lesson invalidated for regeneration
