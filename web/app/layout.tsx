@@ -10,8 +10,11 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <body>
+    // suppressHydrationWarning: browser extensions (Grammarly, VS Code, etc.) inject attributes onto
+    // <html>/<body> before React hydrates, causing a benign attribute mismatch. Scoped to these two
+    // elements only — it does not suppress warnings for any child content.
+    <html lang="en" suppressHydrationWarning>
+      <body suppressHydrationWarning>
         <Providers>{children}</Providers>
       </body>
     </html>

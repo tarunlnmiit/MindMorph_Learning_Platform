@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@plugin "@tailwindcss/typography";
 
 /* ── MindMorph — dark luxury ───────────────────────────────────────────────
    Deep ink surfaces with layered elevation, a restrained warm-gold accent, and
@@ -85,4 +86,63 @@ body {
 /* react-flow dark theming overrides */
 .react-flow__attribution {
   display: none;
+}
+
+/* ── Lesson prose (dark luxury) ────────────────────────────────────────────
+   Readable rhythm + a clearly-separated monospace code block, so lessons stop
+   reading as one mushed wall and code stands apart from prose. */
+.lesson-prose {
+  --tw-prose-body: var(--color-text);
+  --tw-prose-headings: var(--color-text-strong);
+  --tw-prose-bold: var(--color-text-strong);
+  --tw-prose-links: var(--color-gold);
+  --tw-prose-bullets: var(--color-gold-dim);
+  --tw-prose-counters: var(--color-text-muted);
+  --tw-prose-quotes: var(--color-text-muted);
+  --tw-prose-quote-borders: var(--color-gold-dim);
+  --tw-prose-hr: oklch(100% 0 0 / 0.08);
+  --tw-prose-code: var(--color-gold);
+  line-height: 1.75;
+}
+
+/* First heading leads the lesson — gold, no extra top gap. */
+.lesson-prose > :first-child {
+  margin-top: 0;
+}
+.lesson-prose h1,
+.lesson-prose h2,
+.lesson-prose h3 {
+  letter-spacing: -0.01em;
+}
+.lesson-prose h1 {
+  color: var(--color-gold);
+}
+
+/* Inline code: gold tint chip (strip the prose-default back-tick pseudo-content). */
+.lesson-prose :not(pre) > code {
+  background: oklch(80% 0.12 85 / 0.12);
+  color: var(--color-gold);
+  padding: 0.15em 0.4em;
+  border-radius: 6px;
+  font-weight: 500;
+}
+.lesson-prose :not(pre) > code::before,
+.lesson-prose :not(pre) > code::after {
+  content: "";
+}
+
+/* Fenced code: a distinct, framed monospace block that scrolls horizontally. */
+.lesson-prose pre {
+  background: var(--color-ink-900);
+  border: 1px solid oklch(100% 0 0 / 0.08);
+  border-radius: 12px;
+  padding: 1rem 1.15rem;
+  overflow-x: auto;
+  box-shadow: 0 12px 30px -22px oklch(0% 0 0 / 0.9);
+}
+.lesson-prose pre code {
+  color: var(--color-text);
+  background: transparent;
+  font-size: 0.875rem;
+  line-height: 1.6;
 }

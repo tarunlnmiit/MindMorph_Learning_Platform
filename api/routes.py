@@ -22,6 +22,17 @@ from services.learning_service import LockedNodeError, grade, open_lesson, start
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# Generation (orchestration / lesson compose / adaptation) is LLM-backed and can fail transiently —
+# rate limits (Groq TPM), timeouts, malformed model output. Surface those as a clean 503 with a safe
+# message (the real error is logged server-side, never leaked to the client) so the UI can show
+# "try again" instead of a raw 500.
+GEN_FAILED = "The learning service is busy or rate-limited. Please try again in a moment."
+
+
+def _service_unavailable(what: str, exc: Exception) -> HTTPException:
+    logger.exception("api: %s failed", what)
+    return HTTPException(status_code=503, detail=GEN_FAILED)
+
 
 def _load_or_404(repo, user_id: str, session_id: str) -> dict:
     ls = repo.get(user_id, session_id)
@@ -33,7 +44,10 @@ def _load_or_404(repo, user_id: str, session_id: str) -> dict:
 @router.post("/sessions", response_model=StartSessionResponse)
 def create_session(req: CreateSessionRequest) -> StartSessionResponse:
     """Run orchestration for a query. Only the SCOUT route yields a persisted learning_session."""
-    result = start_session(req.query, req.format_type)
+    try:
+        result = start_session(req.query, req.format_type)
+    except Exception as e:
+        raise _service_unavailable("start_session", e)
     resp = StartSessionResponse(
         route=result["route"],
         final_content=result.get("final_content"),
@@ -69,6 +83,9 @@ def open_node_lesson(user_id: str, session_id: str, node_id: str) -> SessionResp
     except LockedNodeError as e:
         # Server-side gate: a locked node cannot be opened even by a hand-crafted request.
         raise HTTPException(status_code=409, detail={"error": "locked", "pending": e.pending})
+    except Exception as e:
+        # Lesson compose is LLM-backed (content + exercise) — transient failure ⇒ 503, not 500.
+        raise _service_unavailable("open_lesson", e)
     repo.save(user_id, session_id, ls)
     return SessionResponse(session_id=session_id, learning_session=ls)
 
@@ -82,5 +99,8 @@ def grade_node(user_id: str, session_id: str, node_id: str, req: GradeRequest) -
         ls = grade(ls, node_id, req.solution)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        # Grading itself is deterministic, but adaptation/regeneration is LLM-backed — guard anyway.
+        raise _service_unavailable("grade", e)
     repo.save(user_id, session_id, ls)
     return SessionResponse(session_id=session_id, learning_session=ls)

@@ -22,7 +22,7 @@ from langchain_core.prompts import (
     HumanMessagePromptTemplate,
 )
 
-from config import llm
+from config import get_chat_model
 from prompts.adaptation_prompt import ADAPTATION_SYSTEM_PROMPT, ADAPTATION_HUMAN_TEMPLATE
 from agents.adaptation.adaptation_schema import GraphAdaptation
 
@@ -31,7 +31,7 @@ class AdaptationAgent:
     """Proposes an additive skill-graph adaptation after a node is graded."""
 
     def __init__(self, push_to_langsmith: bool = False):
-        self.llm = llm
+        self.llm = get_chat_model("complex")  # structured graph adaptation → Sonnet on fallback
         self.structured_llm = self.llm.with_structured_output(GraphAdaptation)
         system_template = SystemMessagePromptTemplate.from_template(ADAPTATION_SYSTEM_PROMPT)
         human_template = HumanMessagePromptTemplate.from_template(ADAPTATION_HUMAN_TEMPLATE)

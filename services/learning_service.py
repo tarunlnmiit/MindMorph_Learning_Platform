@@ -12,7 +12,7 @@ import json
 import logging
 from typing import Optional
 
-from services.completion import incomplete_prereq_labels, locked_node_ids
+from services.completion import incomplete_prereq_labels, locked_node_ids, prereqs_by_node
 from services.mastery import apply_score, default_node_state, feedback_text
 
 logger = logging.getLogger(__name__)
@@ -158,9 +158,18 @@ def open_lesson(ls: dict, node_id: str) -> dict:
     """
     skill_graph = ls["skill_graph"]
     if node_id in locked_node_ids(skill_graph, ls["node_state"]):
-        pending = incomplete_prereq_labels(skill_graph, ls["node_state"], node_id)
-        logger.info("service: blocked locked lesson %s (pending=%s)", node_id, pending)
-        raise LockedNodeError(node_id, pending)
+        # A node deterministically locked by a sub-40 grade may have no remedial prerequisites yet (an
+        # earlier adaptation LLM call failed). Re-attempt remediation now so the lock is never a
+        # permanent dead-end, then re-evaluate before refusing.
+        st = ls["node_state"].get(node_id, {})
+        if st.get("remediation_pending") and not prereqs_by_node(skill_graph).get(node_id):
+            logger.info("service: retrying remediation for flagged node %s on open", node_id)
+            adapt_after_grade(ls, node_id)
+            skill_graph = ls["skill_graph"]
+        if node_id in locked_node_ids(skill_graph, ls["node_state"]):
+            pending = incomplete_prereq_labels(skill_graph, ls["node_state"], node_id)
+            logger.info("service: blocked locked lesson %s (pending=%s)", node_id, pending)
+            raise LockedNodeError(node_id, pending)
 
     ls["selected_node"] = node_id
     if node_id not in ls["lessons"]:
@@ -194,8 +203,18 @@ def adapt_after_grade(ls: dict, node_id: str) -> None:
     score = float(result.get("score", 0.0) or 0.0)
     feedback = feedback_text(result)
 
+    # Remediation (needs_review) gets bounded retries so the remedial prerequisites are near-certain to
+    # land — the deterministic lock holds regardless, but we want an actual unlock path. The mastered
+    # (unlock-edge) path is best-effort with a single try; its failure is harmless.
+    attempts = 2 if state.get("status") == "needs_review" else 1
     logger.info("service: adapting graph after grade on node %s (score=%.0f)", node_id, score)
-    adaptation = _get_adaptation_agent().adapt(json.dumps(ls["skill_graph"]), node_id, score, feedback)
+    adaptation = None
+    for i in range(attempts):
+        adaptation = _get_adaptation_agent().adapt(json.dumps(ls["skill_graph"]), node_id, score, feedback)
+        if adaptation is not None and adaptation.new_nodes:
+            break  # got remedial nodes — done
+        if adaptation is not None and state.get("status") == "mastered":
+            break  # unlock path: edges-only adaptation is fine without new nodes
     if adaptation is None:
         return
 

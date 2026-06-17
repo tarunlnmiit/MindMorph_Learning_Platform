@@ -16,7 +16,7 @@ from langchain_core.prompts import (
     HumanMessagePromptTemplate,
 )
 
-from config import llm
+from config import get_chat_model
 from prompts.consensus_prompt import CONSENSUS_SYSTEM_PROMPT
 from agents.consensus.skill_graph_schema import SkillGraph
 
@@ -38,7 +38,7 @@ class ConsensusAgent:
     '''Synthesizes specialist findings into a structured Skill Dependency Graph.'''
 
     def __init__(self, push_to_langsmith: bool = False):
-        self.llm = llm
+        self.llm = get_chat_model("complex")  # reasoning-heavy → Sonnet on fallback
         self.structured_llm = self.llm.with_structured_output(SkillGraph)
         system_template = SystemMessagePromptTemplate.from_template(CONSENSUS_SYSTEM_PROMPT)
         human_template = HumanMessagePromptTemplate.from_template(_HUMAN_TEMPLATE)
