@@ -134,14 +134,17 @@ Each item notes the **architecture section** it satisfies and the **code gap** i
    state intact** (cross-process durability proof); DB-gated integration test guards the JSONB path. 108
    tests green. *Deferred:* Redis (JSONB suffices at prototype scale); re-pointing Streamlit at the API
    (#12 retires it); Pinecone. *Satisfies:* §5.2, §5.4. *Closes:* the stateless prototype.
-7. 🟡 **Model Router** (RAG still ⛔) — `llm_providers.py` + `config.get_chat_model(tier)`: Groq stays
-   primary; on a primary failure (e.g. Groq free-tier **TPM 413**) it falls back to the **local Claude
-   Code CLI** driven headless (`claude -p`, Haiku for default agents / Sonnet for complex). Composes
-   through `with_structured_output` via LangChain `with_fallbacks`. Toggle `MINDMORPH_LLM_FALLBACK`
-   (`claude_cli` default | `none`). **Placeholder** — the CLI uses the local Claude Code OAuth session
-   (local-dev only, not deployable); swap in `langchain-anthropic` once an API key exists, agents
-   unchanged. Structured-output-over-CLI verified live (real Haiku → parseable JSON). RAG/grounding +
-   multi-vendor HTTP routing still open. *Satisfies (partial):* §5.3, §5.7.
+7. 🟡 **Model Router** (RAG still ⛔) — `llm_providers.py` + `config.get_chat_model(tier, provider, fallback)`:
+   **vendor-selectable**, two independent vendor choices (`groq` | `claude_cli`). **Primary** =
+   `provider` arg or `MINDMORPH_LLM_PROVIDER` env (default `groq`); **fallback** = `fallback` arg or
+   `MINDMORPH_LLM_FALLBACK` env (default `claude_cli` | `none` to disable; a same-vendor fallback is
+   skipped). The fallback fires only on a primary failure (e.g. Groq free-tier **TPM 413**) and composes
+   through `with_structured_output` via LangChain `with_fallbacks`. Claude side runs the **local Claude
+   Code CLI** headless (`claude -p`, Haiku for default / Sonnet for complex). E.g. `MINDMORPH_LLM_PROVIDER=claude_cli`
+   `MINDMORPH_LLM_FALLBACK=groq` → Claude primary, Groq fallback. **Placeholder** — the CLI uses the local
+   Claude Code OAuth session (local-dev only, not deployable); swap in `langchain-anthropic` once an API
+   key exists, agents unchanged. Structured-output-over-CLI verified live (real Haiku → parseable JSON).
+   RAG/grounding + remote multi-vendor HTTP routing (vs CLI) still open. *Satisfies (partial):* §5.3, §5.7.
 
 ### P2 — Personalization & ingestion
 8. **Onboarding + Dynamic Skill Assessment** (social sign-in, MCQ assessment). *Satisfies:* §2.
