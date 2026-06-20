@@ -2,6 +2,7 @@
 // holds no per-request state, so the whole learning_session is passed back and forth as a blob.
 
 import type {
+  IngestResponse,
   LearningSession,
   SessionMeta,
   SessionResponse,
@@ -65,6 +66,23 @@ export const api = {
       `/sessions/${encodeURIComponent(userId)}/${encodeURIComponent(sessionId)}/grade?${q}`,
       { method: "POST", body: JSON.stringify({ solution }) },
     );
+  },
+
+  // Multipart upload — must NOT set Content-Type (the browser sets the multipart boundary), so this
+  // bypasses `req` (which forces application/json).
+  async ingestKnowledge(userId: string, file: File): Promise<IngestResponse> {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(`${BASE}/users/${encodeURIComponent(userId)}/knowledge`, {
+      method: "POST",
+      body: form,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      const detail = body?.detail;
+      throw new Error(typeof detail === "string" ? detail : `Upload failed (${res.status}).`);
+    }
+    return res.json() as Promise<IngestResponse>;
   },
 };
 
