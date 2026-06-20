@@ -55,7 +55,7 @@ def client(monkeypatch):
                             "final_content": None, "exercise": None},
     )
 
-    def fake_open(ls, node_id):
+    def fake_open(ls, node_id, user_id=None):
         from services.completion import locked_node_ids
         if node_id in locked_node_ids(ls["skill_graph"], ls["node_state"]):
             raise LockedNodeError(node_id, ["A"])

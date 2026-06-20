@@ -159,3 +159,10 @@ def test_content_graph_imports_without_loading_rag():
     # The content graph imports clean; RAG is off by default so no embedding backend loads on import.
     out = _import_output("graph.content_graph")
     assert "loading FastEmbed model" not in out
+
+
+def test_ingestion_modules_import_clean():
+    # PDF + registry import without loading PyMuPDF/fastembed (both lazy).
+    out = _import_output("rag.registry")
+    assert "loading FastEmbed model" not in out
+    _import_output("rag.pdf")  # must import without fitz loaded at module level

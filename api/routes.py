@@ -7,11 +7,12 @@ that mutates the dict → save the whole dict back → return it. The repository
 import logging
 import uuid
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, HTTPException, UploadFile
 
 from api.schemas import (
     CreateSessionRequest,
     GradeRequest,
+    IngestResponse,
     SessionMeta,
     SessionResponse,
     StartSessionResponse,
@@ -79,7 +80,7 @@ def open_node_lesson(user_id: str, session_id: str, node_id: str) -> SessionResp
     repo = get_default_repository()
     ls = _load_or_404(repo, user_id, session_id)
     try:
-        ls = open_lesson(ls, node_id)
+        ls = open_lesson(ls, node_id, user_id=user_id)
     except LockedNodeError as e:
         # Server-side gate: a locked node cannot be opened even by a hand-crafted request.
         raise HTTPException(status_code=409, detail={"error": "locked", "pending": e.pending})
@@ -88,6 +89,27 @@ def open_node_lesson(user_id: str, session_id: str, node_id: str) -> SessionResp
         raise _service_unavailable("open_lesson", e)
     repo.save(user_id, session_id, ls)
     return SessionResponse(session_id=session_id, learning_session=ls)
+
+
+@router.post("/users/{user_id}/knowledge", response_model=IngestResponse)
+async def ingest_material(user_id: str, file: UploadFile = File(...)) -> IngestResponse:
+    """Ingest a user's PDF into their personal RAG store; its chunks ground future lessons (P2 #9)."""
+    name = file.filename or "upload.pdf"
+    if not name.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF uploads are supported.")
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty file.")
+    from rag import registry
+
+    try:
+        chunks = registry.ingest_pdf(user_id, data, name)
+    except ValueError as e:
+        # Unreadable / image-only PDF — client error, not a server fault.
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise _service_unavailable("ingest_material", e)
+    return IngestResponse(filename=name, chunks=chunks)
 
 
 @router.post("/sessions/{user_id}/{session_id}/grade", response_model=SessionResponse)
