@@ -70,7 +70,7 @@ backend, and infra (see roadmap below).
 |---|---|---|
 | Frontend | 🟡 | Streamlit prototype (`app.py`) — not the target Next.js/JupyterLite stack. |
 | Application Service | 🟡 | Agents + LangSmith prompt registry exist; **no** FastAPI, Celery, gateway, rate limiting. |
-| AI / LLM | 🟡 | Single Groq model. **LangGraph** orchestration ✅ (CrewAI deferred). Live web grounding (DuckDuckGo) in Content dual-path. Still **no** Model Router, RAG/vector store, or eval pipelines. **Prompt Registry**: ✅ via `prompts/prompt_registry_wrapper_method.py` (LangSmith). |
+| AI / LLM | 🟡 | **LangGraph** orchestration ✅ (CrewAI deferred). Grounding: live web (DuckDuckGo) **+ opt-in local RAG** (FastEmbed + InMemoryVectorStore, `rag/`) in the Content dual-path. **Vendor-selectable Model Router** ✅ (Groq ⇄ Claude-CLI, `config.get_chat_model`). Still **no** eval pipelines; RAG store is in-memory (pgvector later). **Prompt Registry**: ✅ via `prompts/prompt_registry_wrapper_method.py` (LangSmith). |
 | Data | ⛔ | No PostgreSQL/Redis/S3/Pinecone/Kafka — fully stateless. |
 | Infrastructure | ⛔ | No K8s/Terraform/Prometheus/CI-CD. |
 | Analytics & Continuous Improvement | ⛔ | No telemetry pipeline, warehouse, or human-review loop. |
@@ -134,7 +134,16 @@ Each item notes the **architecture section** it satisfies and the **code gap** i
    state intact** (cross-process durability proof); DB-gated integration test guards the JSONB path. 108
    tests green. *Deferred:* Redis (JSONB suffices at prototype scale); re-pointing Streamlit at the API
    (#12 retires it); Pinecone. *Satisfies:* §5.2, §5.4. *Closes:* the stateless prototype.
-7. 🟡 **Model Router** (RAG still ⛔) — `llm_providers.py` + `config.get_chat_model(tier, provider, fallback)`:
+7. 🟡 **Model Router + RAG** — _RAG (grounding):_ `rag/` package adds a **local, no-API-key** retrieval
+   arm. `rag/embeddings.py` wraps **FastEmbed** (ONNX `BAAI/bge-small-en-v1.5`, no torch) as a LangChain
+   `Embeddings`; `rag/store.py` `RagStore` over `langchain_core` `InMemoryVectorStore` (chunk + `Source:`
+   output mirrors `gather_facts`). `build_content_graph(..., retriever=)` merges KB chunks **+** web search
+   into `factual_findings` (single-source stays verbatim; both labelled) — RAG **augments**, never replaces
+   web. Corpus = `knowledge_base/*.md|.txt` (P2 #9 uploads feed the same store later). **Opt-in**
+   (`MINDMORPH_RAG=1`, `MINDMORPH_KNOWLEDGE_DIR`) so dev/tests never download the model; verified live
+   (real FastEmbed indexed the seed corpus and retrieved on a semantic query). Remaining ⛔: pgvector at
+   scale, RAG in the exercise blog/dataset path, re-ranking. _Model Router:_
+   `llm_providers.py` + `config.get_chat_model(tier, provider, fallback)`:
    **vendor-selectable**, two independent vendor choices (`groq` | `claude_cli`). **Primary** =
    `provider` arg or `MINDMORPH_LLM_PROVIDER` env (default `groq`); **fallback** = `fallback` arg or
    `MINDMORPH_LLM_FALLBACK` env (default `claude_cli` | `none` to disable; a same-vendor fallback is
@@ -144,7 +153,7 @@ Each item notes the **architecture section** it satisfies and the **code gap** i
    `MINDMORPH_LLM_FALLBACK=groq` → Claude primary, Groq fallback. **Placeholder** — the CLI uses the local
    Claude Code OAuth session (local-dev only, not deployable); swap in `langchain-anthropic` once an API
    key exists, agents unchanged. Structured-output-over-CLI verified live (real Haiku → parseable JSON).
-   RAG/grounding + remote multi-vendor HTTP routing (vs CLI) still open. *Satisfies (partial):* §5.3, §5.7.
+   Remote multi-vendor HTTP routing (vs the local CLI) still open. *Satisfies (partial):* §5.3, §5.7.
 
 ### P2 — Personalization & ingestion
 8. **Onboarding + Dynamic Skill Assessment** (social sign-in, MCQ assessment). *Satisfies:* §2.
