@@ -16,5 +16,7 @@ sqlalchemy>=2
 psycopg[binary]
 alembic
 httpx
+# RAG grounding (P1 #7) — local embeddings, no API key. InMemoryVectorStore ships with langchain_core.
+fastembed
 pytest
 pytest-asyncio

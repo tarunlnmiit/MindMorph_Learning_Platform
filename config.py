@@ -62,6 +62,12 @@ def get_chat_model(tier: str = "default", provider: str | None = None, fallback:
 # Default-tier model reused across agents via `from config import llm`.
 llm = get_chat_model("default")
 
+# RAG grounding (P1 #7). Opt-in: enabling it builds a local FastEmbed-backed vector store from
+# KNOWLEDGE_DIR on first content-graph build (downloads the embedding model once). Off by default so
+# dev/tests never trigger a model download; retrieval augments web search, never replaces it.
+RAG_ENABLED = os.getenv("MINDMORPH_RAG", "0").lower() in ("1", "true", "yes")
+KNOWLEDGE_DIR = os.getenv("MINDMORPH_KNOWLEDGE_DIR", "knowledge_base")
+
 # Persistence (P1 #6). Default targets the local docker-compose Postgres (see docker-compose.yml);
 # override via DATABASE_URL in .env for any other deployment. Kept as a default (not a hard raise) so
 # the agent/test paths that never touch the DB still import config cleanly.
