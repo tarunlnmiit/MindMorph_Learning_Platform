@@ -96,3 +96,8 @@ export interface SessionResponse {
   session_id: string;
   learning_session: LearningSession;
 }
+
+export interface IngestResponse {
+  filename: string;
+  chunks: number;
+}
