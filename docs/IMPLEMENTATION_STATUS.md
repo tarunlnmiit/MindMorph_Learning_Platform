@@ -157,7 +157,13 @@ Each item notes the **architecture section** it satisfies and the **code gap** i
 
 ### P2 — Personalization & ingestion
 8. **Onboarding + Dynamic Skill Assessment** (social sign-in, MCQ assessment). *Satisfies:* §2.
-9. **User material ingestion** — PyMuPDF extract + vectorize uploads. *Satisfies:* §2, §5.4.
+9. 🟡 **User material ingestion** — `POST /users/{user_id}/knowledge` (multipart PDF) → **PyMuPDF**
+   extract (`rag/pdf.py`) → chunk → **per-user** RAG store (`rag/registry.py`, in-memory, keyed by
+   user_id). The content graph resolves the retriever **per request** from `state['user_id']`
+   (`graph/content_graph._resolve_retriever`), so a user's uploaded material grounds their lessons
+   (merged with web search). `user_id` threads route → `open_lesson` → `_run_lesson` → lesson/content
+   graphs. Verified live (real PDF → FastEmbed → retrieve). *Deferred:* persistence of per-user stores
+   (in-memory today; pgvector later), per-session scoping, OCR for image-only PDFs. *Satisfies:* §2, §5.4.
 
 ### P3 — Full product surface
 10. **AI Teaching Assistant** (chat + voice: Whisper STT, ElevenLabs TTS). *Satisfies:* §2.

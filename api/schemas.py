@@ -19,6 +19,11 @@ class GradeRequest(BaseModel):
     solution: str
 
 
+class IngestResponse(BaseModel):
+    filename: str
+    chunks: int
+
+
 class SessionMeta(BaseModel):
     session_id: str
     title: str

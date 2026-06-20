@@ -135,7 +135,9 @@ def start_session(user_query: str, format_type: str = "B") -> dict:
     return out
 
 
-def _run_lesson(node: dict, format_type: str, prior_weaknesses: list) -> dict:
+def _run_lesson(
+    node: dict, format_type: str, prior_weaknesses: list, user_id: Optional[str] = None
+) -> dict:
     """Invoke the lesson graph for one skill node (content + embedded exercise)."""
     return _run_async(
         _get_lesson_graph().ainvoke(
@@ -144,17 +146,18 @@ def _run_lesson(node: dict, format_type: str, prior_weaknesses: list) -> dict:
                 "skill_description": node.get("description", ""),
                 "format_type": format_type,
                 "prior_weaknesses": prior_weaknesses,
+                "user_id": user_id,
             }
         )
     )
 
 
-def open_lesson(ls: dict, node_id: str) -> dict:
+def open_lesson(ls: dict, node_id: str, user_id: Optional[str] = None) -> dict:
     """Compose (or reuse cached) the lesson for a node and mark it selected. Mutates and returns ls.
 
     Enforces prerequisite locking server-side: opening a locked node raises ``LockedNodeError`` so the
     gate cannot be bypassed by a client. A cached lesson is reused (cost guard — re-opening never
-    rebuilds).
+    rebuilds). ``user_id`` (when given) routes per-user RAG retrieval in the content sub-graph.
     """
     skill_graph = ls["skill_graph"]
     if node_id in locked_node_ids(skill_graph, ls["node_state"]):
@@ -176,7 +179,7 @@ def open_lesson(ls: dict, node_id: str) -> dict:
         node = next(n for n in skill_graph["nodes"] if n["id"] == node_id)
         prior_weaknesses = ls["node_state"].get(node_id, {}).get("weaknesses", [])
         logger.info("service: composing lesson for node %s", node_id)
-        out = _run_lesson(node, ls.get("format_type", "B"), prior_weaknesses)
+        out = _run_lesson(node, ls.get("format_type", "B"), prior_weaknesses, user_id)
         ls["lessons"][node_id] = {
             "content": out.get("content"),
             "exercise": {

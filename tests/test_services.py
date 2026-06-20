@@ -54,7 +54,7 @@ def test_open_lesson_blocks_locked_node(monkeypatch):
 def test_open_lesson_composes_and_caches(monkeypatch):
     calls = {"n": 0}
 
-    def fake_run_lesson(node, fmt, weak):
+    def fake_run_lesson(node, fmt, weak, user_id=None):
         calls["n"] += 1
         return {
             "content": f"lesson for {node['id']}",
