@@ -16,5 +16,10 @@ sqlalchemy>=2
 psycopg[binary]
 alembic
 httpx
+# RAG grounding (P1 #7) — local embeddings, no API key. InMemoryVectorStore ships with langchain_core.
+fastembed
+# Material ingestion (P2 #9) — PDF text extraction + multipart upload.
+pymupdf
+python-multipart
 pytest
 pytest-asyncio

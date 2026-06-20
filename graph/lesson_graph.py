@@ -31,6 +31,7 @@ class LessonState(TypedDict, total=False):
     format_type: str                  # 'A' Boost | 'B' Builder | 'C' Sprint
     prior_score: Optional[float]
     prior_weaknesses: Optional[list]  # list[str] gap topics from a prior failed attempt
+    user_id: Optional[str]            # for per-user RAG retrieval in the content sub-graph
     # Derived.
     skill_query: str
     # Outputs.
@@ -68,6 +69,7 @@ def build_lesson_graph(content_graph: Optional[Any] = None, exercise_graph: Opti
                 "user_query": skill_query,
                 "format_type": state.get("format_type", "B"),
                 "prior_feedback": prior_feedback,
+                "user_id": state.get("user_id"),
             }
         )
         return {"skill_query": skill_query, "content": out.get("final_content")}
