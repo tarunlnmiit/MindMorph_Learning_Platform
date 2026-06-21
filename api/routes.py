@@ -4,13 +4,16 @@ Pattern, every mutating endpoint: load the session from the repository → call 
 that mutates the dict → save the whole dict back → return it. The repository is resolved per request
 (``get_default_repository``), so the store (Postgres / in-memory) is swappable via config.
 """
+import json
 import logging
 import uuid
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
 
 from api.schemas import (
     AssessmentAnswersRequest,
+    ChatRequest,
     CreateSessionRequest,
     GradeRequest,
     IngestResponse,
@@ -21,6 +24,7 @@ from api.schemas import (
 from persistence.repository import get_default_repository
 from services.learning_service import (
     LockedNodeError,
+    build_tutor_messages,
     grade,
     grade_assessment,
     open_lesson,
@@ -134,6 +138,40 @@ def grade_session_assessment(
         raise _service_unavailable("grade_assessment", e)
     repo.save(user_id, session_id, ls)
     return SessionResponse(session_id=session_id, learning_session=ls)
+
+
+def _sse(payload: dict) -> str:
+    return f"data: {json.dumps(payload)}\n\n"
+
+
+@router.post("/sessions/{user_id}/{session_id}/chat")
+async def chat(user_id: str, session_id: str, req: ChatRequest) -> StreamingResponse:
+    """Stream a grounded teaching-assistant reply (SSE) and persist the turn (P3 #10)."""
+    repo = get_default_repository()
+    ls = _load_or_404(repo, user_id, session_id)
+    # setdefault: sessions created before this feature have no `chat` key.
+    ls.setdefault("chat", [])
+    ls["chat"].append({"role": "user", "content": req.message})
+    repo.save(user_id, session_id, ls)  # persist the question before streaming (survives a dropped stream)
+
+    messages = build_tutor_messages(ls, req.node_id, req.message, user_id)
+    from services.learning_service import _get_tutor_agent
+
+    async def gen():
+        full = ""
+        try:
+            async for token in _get_tutor_agent().astream(messages):
+                full += token
+                yield _sse({"token": token})
+        except Exception:
+            logger.exception("api: chat stream failed")
+            yield _sse({"error": GEN_FAILED})
+            return
+        ls["chat"].append({"role": "assistant", "content": full})
+        repo.save(user_id, session_id, ls)
+        yield _sse({"done": True})
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
 
 
 @router.post("/sessions/{user_id}/{session_id}/grade", response_model=SessionResponse)

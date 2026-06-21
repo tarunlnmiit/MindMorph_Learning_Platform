@@ -177,7 +177,14 @@ Each item notes the **architecture section** it satisfies and the **code gap** i
    OCR for image-only PDFs, ANN index (ivfflat/hnsw) at scale. *Satisfies:* §2, §5.4.
 
 ### P3 — Full product surface
-10. **AI Teaching Assistant** (chat + voice: Whisper STT, ElevenLabs TTS). *Satisfies:* §2.
+10. 🟡 **AI Teaching Assistant** — streaming chat tutor (`agents/tutor/`) grounded in the open lesson +
+    the learner's RAG material (`build_tutor_messages` pulls `lessons[node_id]` + per-user
+    `RagStore.retrieve`). `POST /sessions/{user}/{session}/chat` streams tokens over **SSE** and persists
+    each turn to `learning_session["chat"]` (JSONB; user message saved before streaming so it survives a
+    dropped stream). Streams via **ChatGroq directly** (the `FallbackChatModel` wrapper can't emit tokens
+    incrementally — chat has no CLI fallback). Web `TutorChat.tsx` (buffered SSE-over-fetch) on the session
+    page. Verified live (real Groq → 74 token frames). *Deferred:* **voice** (Whisper STT / ElevenLabs TTS),
+    streaming through the router, multi-thread chats. *Satisfies:* §2.
 11. **Screen Vision + Browser Automation agents.** *Satisfies:* §2.
 12. 🟡 **Next.js 15 / React 19 frontend** (`web/`) — brought forward alongside #6 (it's what justifies
     the HTTP backend). Dark-luxury UI consuming the FastAPI API via TanStack Query: localStorage login,

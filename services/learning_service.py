@@ -22,6 +22,7 @@ _orchestration_graph = None
 _lesson_graph = None
 _adaptation_agent = None
 _assessment_agent = None
+_tutor_agent = None
 
 
 def _run_async(coro):
@@ -129,6 +130,7 @@ def new_learning_session(final_state: dict, format_type: str) -> Optional[dict]:
         },
         "lessons": {},
         "selected_node": None,
+        "chat": [],  # AI Teaching Assistant turns (P3 #10): list of {role, content}
     }
     # Diagnostic onboarding quiz (P2 #8): correct answers later pre-seed mastered nodes. Best-effort —
     # omitted entirely if generation fails, so the path still loads (frontend shows the graph directly).
@@ -317,3 +319,48 @@ def grade_assessment(ls: dict, answers: list[int]) -> dict:
         })
     assessment["submitted"] = True
     return ls
+
+
+# --- AI Teaching Assistant (P3 #10) -----------------------------------------------------------
+
+def _get_tutor_agent():
+    global _tutor_agent
+    if _tutor_agent is None:
+        from agents.tutor.tutor_agent import TutorAgent
+
+        _tutor_agent = TutorAgent()
+    return _tutor_agent
+
+
+def _node_label(ls: dict, node_id: Optional[str]) -> str:
+    for n in ls.get("skill_graph", {}).get("nodes", []):
+        if n.get("id") == node_id:
+            return n.get("label", "")
+    return ls.get("summary") or "this topic"
+
+
+def build_tutor_messages(ls: dict, node_id: Optional[str], question: str, user_id: Optional[str]):
+    """Assemble grounded chat messages: open-lesson content + the user's RAG material + prior history.
+
+    Calls ``retrieve`` directly (no ``_run_async`` — this runs inside the route's event loop)."""
+    lesson = (ls.get("lessons") or {}).get(node_id) or {}
+    lesson_content = lesson.get("content")
+
+    rag_context = None
+    if user_id:
+        try:
+            from rag import registry
+
+            store = registry.get_user_store(user_id)
+            if store is not None and not store.is_empty:
+                rag_context = store.retrieve(question)
+        except Exception:
+            logger.exception("tutor: RAG retrieval failed; continuing without it")
+
+    return _get_tutor_agent().build_messages(
+        skill_label=_node_label(ls, node_id),
+        lesson_content=lesson_content,
+        rag_context=rag_context,
+        history=ls.get("chat", []),
+        question=question,
+    )
