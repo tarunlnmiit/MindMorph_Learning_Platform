@@ -71,7 +71,7 @@ backend, and infra (see roadmap below).
 | Frontend | 🟡 | Streamlit prototype (`app.py`) — not the target Next.js/JupyterLite stack. |
 | Application Service | 🟡 | Agents + LangSmith prompt registry exist; **no** FastAPI, Celery, gateway, rate limiting. |
 | AI / LLM | 🟡 | **LangGraph** orchestration ✅ (CrewAI deferred). Grounding: live web (DuckDuckGo) **+ opt-in local RAG** (FastEmbed + InMemoryVectorStore, `rag/`) in the Content dual-path. **Vendor-selectable Model Router** ✅ (Groq ⇄ Claude-CLI, `config.get_chat_model`). Still **no** eval pipelines; RAG store is in-memory (pgvector later). **Prompt Registry**: ✅ via `prompts/prompt_registry_wrapper_method.py` (LangSmith). |
-| Data | ⛔ | No PostgreSQL/Redis/S3/Pinecone/Kafka — fully stateless. |
+| Data | 🟡 | **PostgreSQL** ✅ — learning sessions (JSONB, #6) + per-user RAG vectors (**pgvector**, #9). Still **no** Redis/S3/Kafka. |
 | Infrastructure | ⛔ | No K8s/Terraform/Prometheus/CI-CD. |
 | Analytics & Continuous Improvement | ⛔ | No telemetry pipeline, warehouse, or human-review loop. |
 | LLM Ops & Production | ⛔ | No model router, cost/latency observability, deployment pipeline. |
@@ -157,13 +157,16 @@ Each item notes the **architecture section** it satisfies and the **code gap** i
 
 ### P2 — Personalization & ingestion
 8. **Onboarding + Dynamic Skill Assessment** (social sign-in, MCQ assessment). *Satisfies:* §2.
-9. 🟡 **User material ingestion** — `POST /users/{user_id}/knowledge` (multipart PDF) → **PyMuPDF**
-   extract (`rag/pdf.py`) → chunk → **per-user** RAG store (`rag/registry.py`, in-memory, keyed by
-   user_id). The content graph resolves the retriever **per request** from `state['user_id']`
-   (`graph/content_graph._resolve_retriever`), so a user's uploaded material grounds their lessons
-   (merged with web search). `user_id` threads route → `open_lesson` → `_run_lesson` → lesson/content
-   graphs. Verified live (real PDF → FastEmbed → retrieve). *Deferred:* persistence of per-user stores
-   (in-memory today; pgvector later), per-session scoping, OCR for image-only PDFs. *Satisfies:* §2, §5.4.
+9. ✅ **User material ingestion** — `POST /users/{user_id}/knowledge` (multipart PDF) → **PyMuPDF**
+   extract (`rag/pdf.py`) → chunk → **per-user** RAG store (`rag/registry.py`), keyed by user_id, with a
+   **web upload UI** (`web/components/KnowledgeUpload.tsx`). The content graph resolves the retriever
+   **per request** from `state['user_id']` (`graph/content_graph._resolve_retriever`), so a user's
+   uploaded material grounds their lessons (merged with web search). `user_id` threads route →
+   `open_lesson` → `_run_lesson` → lesson/content graphs. **Persistence:** durable **pgvector** store
+   (`rag/pg_store.PgRagStore`, `rag_chunks` table, migration `0002`) selected by `MINDMORPH_STORE=postgres`
+   (same switch as the session repo); in-memory store backs zero-infra dev/tests. Verified live (real PDF
+   → FastEmbed → pgvector ingest + cosine retrieve, per-user isolation). *Deferred:* per-session scoping,
+   OCR for image-only PDFs, ANN index (ivfflat/hnsw) at scale. *Satisfies:* §2, §5.4.
 
 ### P3 — Full product surface
 10. **AI Teaching Assistant** (chat + voice: Whisper STT, ElevenLabs TTS). *Satisfies:* §2.
