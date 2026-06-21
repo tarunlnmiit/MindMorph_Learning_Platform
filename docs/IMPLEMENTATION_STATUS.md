@@ -68,7 +68,7 @@ backend, and infra (see roadmap below).
 
 | Layer | Status | Notes |
 |---|---|---|
-| Frontend | 🟡 | Streamlit prototype (`app.py`) — not the target Next.js/JupyterLite stack. |
+| Frontend | ✅ | **Next.js** (`web/`) is the product; legacy Streamlit `app.py` **retired** (P3 #12). JupyterLite in-browser scratchpad embedded in the lesson. |
 | Application Service | 🟡 | Agents + LangSmith prompt registry exist; **no** FastAPI, Celery, gateway, rate limiting. |
 | AI / LLM | 🟡 | **LangGraph** orchestration ✅ (CrewAI deferred). Grounding: live web (DuckDuckGo) **+ opt-in local RAG** (FastEmbed + InMemoryVectorStore, `rag/`) in the Content dual-path. **Vendor-selectable Model Router** ✅ (Groq ⇄ Claude-CLI, `config.get_chat_model`). Still **no** eval pipelines; RAG store is in-memory (pgvector later). **Prompt Registry**: ✅ via `prompts/prompt_registry_wrapper_method.py` (LangSmith). |
 | Data | 🟡 | **PostgreSQL** ✅ — learning sessions (JSONB, #6) + per-user RAG vectors (**pgvector**, #9). Still **no** Redis/S3/Kafka. |
@@ -194,8 +194,10 @@ Each item notes the **architecture section** it satisfies and the **code gap** i
     (mocked API) covers the full loop + lock gate. **Verified live against the real FastAPI + Postgres:**
     login → the persisted adapted session loads through all layers and the 8-node graph renders (CORS
     preflight + read path proven; browser-driven grade is the one chain not re-run, its parts covered by
-    curl write + mocked-client E2E). *Deferred:* JupyterLite sandboxes; retiring Streamlit (kept until
-    full parity). *Satisfies:* §5.1.
+    curl write + mocked-client E2E). **P3 #12 complete:** legacy Streamlit `app.py` **retired** (learning
+    logic already in `services/`; the two tests that imported `app` repointed there) and a **JupyterLite**
+    in-browser Python scratchpad (`web/components/Sandbox.tsx`, hosted-REPL iframe, `NEXT_PUBLIC_JUPYTERLITE_URL`)
+    embedded in coding lessons. *Satisfies:* §5.1.
 13. **Infra, analytics, security layers** — K8s/Terraform, Kafka/Airflow/BigQuery, Auth0/RBAC/encryption.
     *Satisfies:* §5.5, §5.6, §5.8.
 

@@ -1,9 +1,15 @@
 ## Environment
 
 ALWAYS use the `mindmorph` conda environment for every command in this project — running
-Python, pip installs, pytest, streamlit, anything. Never use base.
+Python, pip installs, pytest, uvicorn, anything. Never use base.
 - Run one-off commands with `conda run -n mindmorph <cmd>` (e.g. `conda run -n mindmorph python -m pytest -q`).
 - Install deps into it: `conda run -n mindmorph pip install <pkg>` (then add to `requirements.txt`).
+
+## App surface
+
+The product is the **Next.js app in `web/`** (TanStack Query → FastAPI in `api/`). Run it with
+`cd web && npm run dev` plus `conda run -n mindmorph uvicorn api.main:app --port 8000`. The legacy
+Streamlit prototype (`app.py`) was **retired** in P3 #12 — the learning logic lives in `services/`.
 
 ## graphify
 

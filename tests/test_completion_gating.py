@@ -7,12 +7,12 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.append(ROOT)
 
-from app import (
-    _prereqs_by_node,
-    _complete_node_ids,
-    _display_status,
-    _locked_node_ids,
-    _incomplete_prereq_labels,
+from services.completion import (
+    prereqs_by_node as _prereqs_by_node,
+    complete_node_ids as _complete_node_ids,
+    display_status as _display_status,
+    locked_node_ids as _locked_node_ids,
+    incomplete_prereq_labels as _incomplete_prereq_labels,
 )
 
 

@@ -3,7 +3,7 @@
 **Audience:** QA / Testing team
 **Scope:** Everything implemented to date — the multi-agent learning prototype, the adaptive
 learning loop, and the individual-agent test harness.
-**Build under test:** `main` branch (latest). UI is a Streamlit app (`app.py`).
+**Build under test:** `main` branch (latest). UI is the Next.js web app (`web/`) over the FastAPI backend (`api/`).
 **Last updated:** 2026-06-13
 
 ---
@@ -74,10 +74,13 @@ GITHUB_TOKEN=<optional token>
 
 ### 3.3 Launch the app
 ```bash
-conda run -n mindmorph streamlit run app.py
+# Backend (FastAPI)
+MINDMORPH_STORE=memory conda run -n mindmorph uvicorn api.main:app --port 8000
+# Frontend (Next.js), separate terminal
+cd web && npm install && npm run dev
 ```
-Browser opens at **http://localhost:8501**. Keep the terminal visible — runtime logs print there and
-also to `logs/mindmorph.log`.
+Browser opens at **http://localhost:3000** (API on :8000). Backend runtime logs print to the uvicorn
+terminal and `logs/mindmorph.log`. (The legacy Streamlit app was retired in P3 #12.)
 
 ### 3.4 Run the automated test suite (separate terminal)
 ```bash
@@ -298,7 +301,7 @@ Notes:        (LLM output is non-deterministic — include the seed query so we 
 
 | Thing | Value |
 |---|---|
-| Launch | `conda run -n mindmorph streamlit run app.py` → http://localhost:8501 |
+| Launch | backend: `MINDMORPH_STORE=memory conda run -n mindmorph uvicorn api.main:app --port 8000`; frontend: `cd web && npm run dev` → http://localhost:3000 |
 | Tests | `conda run -n mindmorph python -m pytest -q` |
 | Logs | terminal + `logs/mindmorph.log` |
 | Status glyphs | ✅ complete (node + all prereqs mastered) · 🔒 prereqs pending · ▶ 50–79 · 🔁 < 50 (mastery is sticky) |
