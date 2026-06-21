@@ -4,7 +4,8 @@
 #   postgresql+psycopg://mindmorph:mindmorph@localhost:5432/mindmorph
 services:
   db:
-    image: postgres:16
+    # pgvector/pgvector ships Postgres 16 + the `vector` extension (P2 #9 RAG persistence).
+    image: pgvector/pgvector:pg16
     container_name: mindmorph-db
     environment:
       POSTGRES_USER: mindmorph

@@ -21,5 +21,7 @@ fastembed
 # Material ingestion (P2 #9) — PDF text extraction + multipart upload.
 pymupdf
 python-multipart
+# RAG persistence (P2 #9) — pgvector-backed per-user store (opt-in via MINDMORPH_STORE=postgres).
+pgvector
 pytest
 pytest-asyncio
