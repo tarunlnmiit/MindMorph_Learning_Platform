@@ -5,6 +5,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { CodeEditor } from "./CodeEditor";
 import { GradeResult } from "./GradeResult";
+import { Sandbox } from "./Sandbox";
 import type { LearningSession } from "@/lib/types";
 
 export function LessonPanel({
@@ -80,6 +81,8 @@ export function LessonPanel({
           </button>
 
           {lastFeedback && <GradeResult result={lastFeedback} />}
+
+          {isCoding && <Sandbox />}
         </section>
       )}
     </article>

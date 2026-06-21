@@ -6,8 +6,6 @@ langchain-groq
 langsmith
 pydantic
 python-dotenv
-streamlit
-streamlit-ace
 ddgs
 # Persistence + API layer (P1 #6)
 fastapi

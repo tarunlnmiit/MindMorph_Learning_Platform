@@ -42,6 +42,23 @@ pip install -r requirements.txt
 GROQ_API_KEY=your_api_key_here
 ```
 
+## Running the App
+
+MindMorph is a **Next.js** frontend (`web/`) over a **FastAPI** backend (`api/`). The legacy Streamlit
+prototype was retired in P3 #12.
+
+```bash
+# 1. Backend (FastAPI) — zero-infra in-memory store for local dev
+MINDMORPH_STORE=memory conda run -n mindmorph uvicorn api.main:app --port 8000
+# (for durable Postgres + pgvector: docker compose up -d db && conda run -n mindmorph alembic upgrade head)
+
+# 2. Frontend (Next.js), in another terminal
+cd web && npm install && npm run dev   # http://localhost:3000
+```
+
+Optional: `MINDMORPH_RAG=1` enables knowledge-base grounding; `NEXT_PUBLIC_JUPYTERLITE_URL` overrides the
+in-lesson scratchpad REPL.
+
 ## Running the Agents
 
 - Run orchestrator (recommended first):

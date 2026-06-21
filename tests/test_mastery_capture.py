@@ -6,7 +6,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.append(ROOT)
 
-from app import _apply_score, MASTERY_THRESHOLD, REVIEW_THRESHOLD
+from services.mastery import apply_score as _apply_score, MASTERY_THRESHOLD, REVIEW_THRESHOLD
 
 
 def _ls(node_id="n1", **overrides):
