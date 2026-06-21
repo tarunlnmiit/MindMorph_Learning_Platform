@@ -6,6 +6,7 @@ import { useState } from "react";
 import { AssessmentQuiz } from "@/components/AssessmentQuiz";
 import { LessonPanel } from "@/components/LessonPanel";
 import { SkillGraph } from "@/components/SkillGraph";
+import { TutorChat } from "@/components/TutorChat";
 import { LockedError, api } from "@/lib/api";
 import { completeNodeIds, incompletePrereqLabels } from "@/lib/status";
 import type { SessionResponse } from "@/lib/types";
@@ -162,6 +163,16 @@ export default function SessionPage() {
             Pick a skill on the graph to open its lesson.
           </div>
         )}
+      </section>
+
+      <section className="mt-8">
+        <TutorChat
+          userId={userId!}
+          sessionId={sessionId}
+          nodeId={selected ?? null}
+          history={session.chat ?? []}
+          sessionKey={key}
+        />
       </section>
         </>
       )}

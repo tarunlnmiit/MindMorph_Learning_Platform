@@ -75,6 +75,49 @@ export const api = {
     );
   },
 
+  // Streaming chat (SSE over POST → fetch + reader, not EventSource which is GET-only). Buffers across
+  // reads because reader chunks don't align to "\n\n" frame boundaries.
+  async streamChat(
+    userId: string,
+    sessionId: string,
+    nodeId: string | null,
+    message: string,
+    cb: { onToken: (t: string) => void; onDone: () => void; onError: (m: string) => void },
+  ): Promise<void> {
+    const res = await fetch(
+      `${BASE}/sessions/${encodeURIComponent(userId)}/${encodeURIComponent(sessionId)}/chat`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message, node_id: nodeId }),
+      },
+    );
+    if (!res.ok || !res.body) {
+      cb.onError(`Chat failed (${res.status}).`);
+      return;
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let sep: number;
+      while ((sep = buffer.indexOf("\n\n")) !== -1) {
+        const frame = buffer.slice(0, sep);
+        buffer = buffer.slice(sep + 2);
+        const line = frame.replace(/^data: /, "").trim();
+        if (!line) continue;
+        const evt = JSON.parse(line) as { token?: string; done?: boolean; error?: string };
+        if (evt.error) return cb.onError(evt.error);
+        if (evt.done) return cb.onDone();
+        if (evt.token) cb.onToken(evt.token);
+      }
+    }
+    cb.onDone();
+  },
+
   // Multipart upload — must NOT set Content-Type (the browser sets the multipart boundary), so this
   // bypasses `req` (which forces application/json).
   async ingestKnowledge(userId: string, file: File): Promise<IngestResponse> {
