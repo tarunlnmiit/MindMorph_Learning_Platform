@@ -10,6 +10,7 @@ import uuid
 from fastapi import APIRouter, File, HTTPException, UploadFile
 
 from api.schemas import (
+    AssessmentAnswersRequest,
     CreateSessionRequest,
     GradeRequest,
     IngestResponse,
@@ -18,7 +19,13 @@ from api.schemas import (
     StartSessionResponse,
 )
 from persistence.repository import get_default_repository
-from services.learning_service import LockedNodeError, grade, open_lesson, start_session
+from services.learning_service import (
+    LockedNodeError,
+    grade,
+    grade_assessment,
+    open_lesson,
+    start_session,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -110,6 +117,23 @@ async def ingest_material(user_id: str, file: UploadFile = File(...)) -> IngestR
     except Exception as e:
         raise _service_unavailable("ingest_material", e)
     return IngestResponse(filename=name, chunks=chunks)
+
+
+@router.post("/sessions/{user_id}/{session_id}/assessment", response_model=SessionResponse)
+def grade_session_assessment(
+    user_id: str, session_id: str, req: AssessmentAnswersRequest
+) -> SessionResponse:
+    """Grade the onboarding diagnostic quiz; correct answers pre-seed mastered nodes (P2 #8)."""
+    repo = get_default_repository()
+    ls = _load_or_404(repo, user_id, session_id)
+    try:
+        ls = grade_assessment(ls, req.answers)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise _service_unavailable("grade_assessment", e)
+    repo.save(user_id, session_id, ls)
+    return SessionResponse(session_id=session_id, learning_session=ls)
 
 
 @router.post("/sessions/{user_id}/{session_id}/grade", response_model=SessionResponse)

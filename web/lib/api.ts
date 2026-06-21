@@ -68,6 +68,13 @@ export const api = {
     );
   },
 
+  gradeAssessment(userId: string, sessionId: string, answers: number[]) {
+    return req<SessionResponse>(
+      `/sessions/${encodeURIComponent(userId)}/${encodeURIComponent(sessionId)}/assessment`,
+      { method: "POST", body: JSON.stringify({ answers }) },
+    );
+  },
+
   // Multipart upload — must NOT set Content-Type (the browser sets the multipart boundary), so this
   // bypasses `req` (which forces application/json).
   async ingestKnowledge(userId: string, file: File): Promise<IngestResponse> {

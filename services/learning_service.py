@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 _orchestration_graph = None
 _lesson_graph = None
 _adaptation_agent = None
+_assessment_agent = None
 
 
 def _run_async(coro):
@@ -73,6 +74,28 @@ def _get_adaptation_agent():
     return _adaptation_agent
 
 
+def _get_assessment_agent():
+    global _assessment_agent
+    if _assessment_agent is None:
+        from agents.assessment.skill_assessment_agent import SkillAssessmentAgent
+
+        _assessment_agent = SkillAssessmentAgent(push_to_langsmith=False)
+    return _assessment_agent
+
+
+def _run_assessment(skill_graph: dict) -> Optional[dict]:
+    """Generate the diagnostic MCQ quiz for a new path. Best-effort: any failure returns None so path
+    creation never fails on the assessment (the frontend then just shows the graph directly)."""
+    try:
+        quiz = _get_assessment_agent().assess(json.dumps(skill_graph))
+    except Exception:
+        logger.exception("service: assessment generation failed; continuing without a quiz")
+        return None
+    if quiz is None or not quiz.questions:
+        return None
+    return {"quiz": quiz.model_dump(), "submitted": False}
+
+
 class LockedNodeError(Exception):
     """Raised when a lesson is opened for a node whose prerequisites are not yet complete."""
 
@@ -91,7 +114,7 @@ def new_learning_session(final_state: dict, format_type: str) -> Optional[dict]:
     skill_graph = final_state.get("skill_graph")
     if not (skill_graph and skill_graph.get("nodes")):
         return None
-    return {
+    ls = {
         "skill_graph": skill_graph,
         "skill_graph_mermaid": final_state.get("skill_graph_mermaid"),
         "summary": skill_graph.get("summary"),
@@ -107,6 +130,12 @@ def new_learning_session(final_state: dict, format_type: str) -> Optional[dict]:
         "lessons": {},
         "selected_node": None,
     }
+    # Diagnostic onboarding quiz (P2 #8): correct answers later pre-seed mastered nodes. Best-effort —
+    # omitted entirely if generation fails, so the path still loads (frontend shows the graph directly).
+    assessment = _run_assessment(skill_graph)
+    if assessment is not None:
+        ls["assessment"] = assessment
+    return ls
 
 
 def start_session(user_query: str, format_type: str = "B") -> dict:
@@ -257,4 +286,34 @@ def grade(ls: dict, node_id: str, solution: str) -> dict:
     if result is not None:
         apply_score(ls, node_id, fmt, result)
         adapt_after_grade(ls, node_id)
+    return ls
+
+
+def grade_assessment(ls: dict, answers: list[int]) -> dict:
+    """Grade the onboarding MCQ quiz; each correct answer pre-seeds that node as mastered. Returns ls.
+
+    Reuses ``apply_score`` (sticky mastered). Wrong / unanswered (-1) leave the node at default
+    ``available``. Does NOT run adaptation (no remedial nodes at onboarding). Mutates and returns ls.
+    """
+    assessment = ls.get("assessment")
+    if not assessment or not assessment.get("quiz"):
+        raise ValueError("No assessment quiz on this session.")
+    questions = assessment["quiz"].get("questions", [])
+    if len(answers) != len(questions):
+        raise ValueError(f"Expected {len(questions)} answers, got {len(answers)}.")
+
+    for q, ans in zip(questions, answers):
+        if ans != q.get("correct_index"):
+            continue  # wrong or skipped (-1) → leave node available
+        node_id = q.get("node_id")
+        # Guard: the LLM-supplied node_id must be a real node, else apply_score would create a phantom
+        # node_state entry and corrupt the complete/total counter.
+        if node_id not in ls["node_state"]:
+            logger.warning("assessment: skipping unknown node_id %r from quiz", node_id)
+            continue
+        apply_score(ls, node_id, "mcq_assessment", {
+            "score": 100,
+            "feedback": "Passed the diagnostic assessment for this skill.",
+        })
+    assessment["submitted"] = True
     return ls
