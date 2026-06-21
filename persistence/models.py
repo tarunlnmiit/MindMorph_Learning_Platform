@@ -1,17 +1,20 @@
 """ORM models for persisted learning state.
 
-One table, one blob: the entire ``learning_session`` dict lives in a single JSONB column keyed by
-``(user_id, session_id)``. No normalized per-node tables for the MVP — the session is only ever read or
-written as a whole, so a blob keeps the mapping trivial and the "swap the store, keep the logic"
-property the loop was designed for.
+``learning_sessions``: the entire ``learning_session`` dict in a single JSONB column keyed by
+``(user_id, session_id)`` (read/written as a whole — a blob keeps the mapping trivial).
+
+``rag_chunks``: per-user ingested material for RAG (P2 #9), one row per chunk with its FastEmbed
+vector in a pgvector column, queried by cosine distance scoped to ``user_id``.
 """
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, String, func
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import DateTime, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from persistence.db import Base
+from rag.embeddings import EMBED_DIM
 
 
 def _utcnow() -> datetime:
@@ -30,4 +33,18 @@ class LearningSessionRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, server_default=func.now()
+    )
+
+
+class RagChunkRow(Base):
+    __tablename__ = "rag_chunks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # Scope every chunk to the uploading user; retrieval filters on this.
+    user_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    source: Mapped[str] = mapped_column(String, nullable=False)  # filename, shown as the citation
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[list[float]] = mapped_column(Vector(EMBED_DIM), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, server_default=func.now()
     )

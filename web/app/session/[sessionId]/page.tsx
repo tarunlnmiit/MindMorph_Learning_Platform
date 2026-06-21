@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
+import { AssessmentQuiz } from "@/components/AssessmentQuiz";
 import { LessonPanel } from "@/components/LessonPanel";
 import { SkillGraph } from "@/components/SkillGraph";
 import { LockedError, api } from "@/lib/api";
@@ -49,6 +50,12 @@ export default function SessionPage() {
     onError: (e) => setErrorMsg(e.message),
   });
 
+  const assess = useMutation({
+    mutationFn: (answers: number[]) => api.gradeAssessment(userId!, sessionId, answers),
+    onSuccess: writeBack,
+    onError: (e) => setErrorMsg(e.message),
+  });
+
   if (ready && !userId) {
     router.push("/");
     return null;
@@ -60,6 +67,7 @@ export default function SessionPage() {
   const total = session.skill_graph.nodes.length;
   const complete = completeNodeIds(session.skill_graph, session.node_state).size;
   const selected = session.selected_node;
+  const pendingAssessment = !!session.assessment && !session.assessment.submitted;
 
   return (
     <main className="mx-auto max-w-7xl px-6 py-10 md:px-10">
@@ -81,6 +89,31 @@ export default function SessionPage() {
         </div>
       </header>
 
+      {pendingAssessment && session.assessment ? (
+        <section className="mt-8">
+          {errorMsg && (
+            <p
+              className="mb-3 rounded-lg border px-4 py-2 text-sm"
+              style={{ color: "var(--color-review)", borderColor: "var(--color-review)" }}
+            >
+              ⚠️ {errorMsg}
+            </p>
+          )}
+          <AssessmentQuiz
+            quiz={session.assessment.quiz}
+            submitting={assess.isPending}
+            onSubmit={(answers) => {
+              setErrorMsg(null);
+              assess.mutate(answers);
+            }}
+            onSkip={() => {
+              setErrorMsg(null);
+              assess.mutate(session.assessment!.quiz.questions.map(() => -1));
+            }}
+          />
+        </section>
+      ) : (
+        <>
       {/* Stacked, full-width: the graph is the map up top; the lesson composes below it. */}
       <section className="mt-8">
         <SkillGraph
@@ -130,6 +163,8 @@ export default function SessionPage() {
           </div>
         )}
       </section>
+        </>
+      )}
     </main>
   );
 }

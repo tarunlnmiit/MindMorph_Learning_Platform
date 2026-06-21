@@ -1,13 +1,14 @@
-"""In-memory registry of RAG vector stores (P2 #9).
+"""Registry of RAG vector stores (P2 #9).
 
-Holds one **per-user** store (the user's ingested material) plus a cached **global** store built from
-the shared knowledge base. Stores live in process memory — the MVP scope; swap for a persistent /
-pgvector-backed store later without changing callers.
+Per-user store backend is selected by ``MINDMORPH_STORE`` (same switch as the session repository):
+``postgres`` → durable ``PgRagStore`` (pgvector), anything else → process-memory ``RagStore``. Plus a
+cached **global** store built from the shared knowledge base.
 
 Embeddings are resolved via ``rag.embeddings.get_embeddings`` (imported lazily and indirectly so tests
 can monkeypatch it with a fake — no model download).
 """
 import logging
+import os
 from typing import Optional
 
 from rag.store import RagStore, _chunk_text
@@ -19,16 +20,26 @@ _global_store: Optional[RagStore] = None
 _global_built = False
 
 
+def _use_postgres() -> bool:
+    return os.getenv("MINDMORPH_STORE", "postgres").lower() == "postgres"
+
+
 def _new_store() -> RagStore:
     import rag.embeddings as emb  # indirection so tests can patch get_embeddings
 
     return RagStore(emb.get_embeddings())
 
 
-def get_user_store(user_id: str, create: bool = False) -> Optional[RagStore]:
-    """Return the user's store. ``create=True`` makes an empty one on first use."""
+def get_user_store(user_id: str, create: bool = False):
+    """Return the user's store. In Postgres mode this is a stateless ``PgRagStore`` handle (the data is
+    in the DB, so ``create`` is irrelevant — emptiness is read from the DB). In memory mode it's a
+    process-local ``RagStore``, created on first use when ``create=True``."""
     if not user_id:
         return None
+    if _use_postgres():
+        from rag.pg_store import PgRagStore
+
+        return PgRagStore(user_id)
     store = _user_stores.get(user_id)
     if store is None and create:
         store = _new_store()

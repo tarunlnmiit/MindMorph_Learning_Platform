@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { api } from "@/lib/api";
 import { useUser } from "@/lib/useUser";
+import { KnowledgeUpload } from "@/components/KnowledgeUpload";
 
 export default function HomePage() {
   const { userId, ready, signIn, signOut } = useUser();
@@ -126,6 +127,8 @@ function Dashboard({ userId, onSignOut }: { userId: string; onSignOut: () => voi
           </p>
         )}
       </section>
+
+      <KnowledgeUpload userId={userId} />
 
       <section className="mt-10">
         <h2 className="text-sm uppercase tracking-wider text-text-muted">Your paths</h2>

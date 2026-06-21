@@ -13,6 +13,8 @@ logger = logging.getLogger(__name__)
 
 # FastEmbed's small, fast default. ~130MB ONNX, downloaded once on first use.
 DEFAULT_MODEL = "BAAI/bge-small-en-v1.5"
+# Output dimensionality of DEFAULT_MODEL — the pgvector column width must match (persistence/models.py).
+EMBED_DIM = 384
 
 
 class FastEmbedEmbeddings(Embeddings):

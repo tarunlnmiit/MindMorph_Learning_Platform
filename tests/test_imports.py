@@ -166,3 +166,14 @@ def test_ingestion_modules_import_clean():
     out = _import_output("rag.registry")
     assert "loading FastEmbed model" not in out
     _import_output("rag.pdf")  # must import without fitz loaded at module level
+
+
+def test_pg_store_imports_without_db_or_fastembed():
+    # The pgvector store imports clean — no engine creation, no fastembed (both lazy).
+    out = _import_output("rag.pg_store")
+    assert "creating engine" not in out and "loading FastEmbed model" not in out
+
+
+def test_assessment_agent_import_has_no_side_effects():
+    out = _import_output("agents.assessment.skill_assessment_agent")
+    assert "generating diagnostic quiz" not in out  # the logged assess() line must not fire on import
