@@ -24,6 +24,10 @@ class IngestResponse(BaseModel):
     chunks: int
 
 
+class AssessmentAnswersRequest(BaseModel):
+    answers: list[int]  # one 0-based option index per question; -1 = unanswered/skipped
+
+
 class SessionMeta(BaseModel):
     session_id: str
     title: str

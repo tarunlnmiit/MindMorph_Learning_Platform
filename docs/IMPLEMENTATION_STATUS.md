@@ -156,7 +156,15 @@ Each item notes the **architecture section** it satisfies and the **code gap** i
    Remote multi-vendor HTTP routing (vs the local CLI) still open. *Satisfies (partial):* §5.3, §5.7.
 
 ### P2 — Personalization & ingestion
-8. **Onboarding + Dynamic Skill Assessment** (social sign-in, MCQ assessment). *Satisfies:* §2.
+8. 🟡 **Onboarding + Dynamic Skill Assessment** — after a path is created, `SkillAssessmentAgent`
+   (`agents/assessment/`, structured-output MCQ from the skill graph) generates a diagnostic quiz stored
+   in `learning_session["assessment"]`. `POST /sessions/{user}/{session}/assessment` grades it:
+   correct answers **pre-seed those nodes `mastered`** via `services/mastery.apply_score` (unknown/
+   hallucinated `node_id`s are skipped — no phantom node_state). Web quiz UI (`web/components/AssessmentQuiz.tsx`)
+   gates the session page until submitted/skipped. Quiz generation is best-effort (failure → no quiz, path
+   still loads). Verified live (real LLM → valid quiz, all-correct → all nodes mastered). **Lightweight
+   onboarding** — real **social sign-in deferred to P3 #13** (auth layer); MVP login stays localStorage.
+   *Satisfies:* §2.
 9. ✅ **User material ingestion** — `POST /users/{user_id}/knowledge` (multipart PDF) → **PyMuPDF**
    extract (`rag/pdf.py`) → chunk → **per-user** RAG store (`rag/registry.py`), keyed by user_id, with a
    **web upload UI** (`web/components/KnowledgeUpload.tsx`). The content graph resolves the retriever

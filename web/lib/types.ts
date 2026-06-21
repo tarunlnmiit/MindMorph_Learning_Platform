@@ -67,6 +67,23 @@ export interface GradeResult {
   feedback?: string;
 }
 
+export interface MCQQuestion {
+  node_id: string;
+  question: string;
+  options: string[];
+  correct_index: number;
+  explanation?: string;
+}
+
+export interface AssessmentQuiz {
+  questions: MCQQuestion[];
+}
+
+export interface Assessment {
+  quiz: AssessmentQuiz;
+  submitted: boolean;
+}
+
 export interface LearningSession {
   skill_graph: SkillGraph;
   summary?: string | null;
@@ -76,6 +93,7 @@ export interface LearningSession {
   node_state: Record<string, NodeState>;
   lessons: Record<string, Lesson>;
   selected_node?: string | null;
+  assessment?: Assessment | null;
 }
 
 export interface SessionMeta {
