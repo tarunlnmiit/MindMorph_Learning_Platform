@@ -84,6 +84,11 @@ export interface Assessment {
   submitted: boolean;
 }
 
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
 export interface LearningSession {
   skill_graph: SkillGraph;
   summary?: string | null;
@@ -94,6 +99,7 @@ export interface LearningSession {
   lessons: Record<string, Lesson>;
   selected_node?: string | null;
   assessment?: Assessment | null;
+  chat?: ChatMessage[];
 }
 
 export interface SessionMeta {

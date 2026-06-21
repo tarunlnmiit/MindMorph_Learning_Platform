@@ -28,6 +28,11 @@ class AssessmentAnswersRequest(BaseModel):
     answers: list[int]  # one 0-based option index per question; -1 = unanswered/skipped
 
 
+class ChatRequest(BaseModel):
+    message: str = Field(..., min_length=1)
+    node_id: Optional[str] = None  # the open skill node, for grounding (optional)
+
+
 class SessionMeta(BaseModel):
     session_id: str
     title: str
