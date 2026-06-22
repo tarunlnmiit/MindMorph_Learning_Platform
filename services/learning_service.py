@@ -13,7 +13,18 @@ import logging
 from typing import Optional
 
 from services.completion import incomplete_prereq_labels, locked_node_ids, prereqs_by_node
-from services.mastery import apply_score, default_node_state, feedback_text
+from services.mastery import (
+    MASTERY_THRESHOLD,
+    REVIEW_THRESHOLD,
+    apply_score,
+    default_node_state,
+    feedback_text,
+)
+
+# A correct diagnostic answer is a head-start, not mastery: land between the thresholds so the node
+# becomes `in_progress` (path preserved) — one MCQ shouldn't fully master a skill. Passing the node's
+# actual exercise (>=MASTERY_THRESHOLD) still upgrades it later.
+ASSESSMENT_PASS_SCORE = (REVIEW_THRESHOLD + MASTERY_THRESHOLD) // 2
 
 logger = logging.getLogger(__name__)
 
@@ -292,10 +303,12 @@ def grade(ls: dict, node_id: str, solution: str) -> dict:
 
 
 def grade_assessment(ls: dict, answers: list[int]) -> dict:
-    """Grade the onboarding MCQ quiz; each correct answer pre-seeds that node as mastered. Returns ls.
+    """Grade the onboarding MCQ quiz; each correct answer gives that node a head-start. Returns ls.
 
-    Reuses ``apply_score`` (sticky mastered). Wrong / unanswered (-1) leave the node at default
-    ``available``. Does NOT run adaptation (no remedial nodes at onboarding). Mutates and returns ls.
+    A correct answer marks the node ``in_progress`` (``ASSESSMENT_PASS_SCORE``), NOT ``mastered`` — one MCQ
+    isn't mastery, and full-mastering everything on a perfect quiz would empty the learning path. The
+    learner still studies; passing the node's real exercise upgrades it to mastered. Wrong / unanswered
+    (-1) leave the node ``available``. Does NOT run adaptation. Mutates and returns ls.
     """
     assessment = ls.get("assessment")
     if not assessment or not assessment.get("quiz"):
@@ -314,8 +327,8 @@ def grade_assessment(ls: dict, answers: list[int]) -> dict:
             logger.warning("assessment: skipping unknown node_id %r from quiz", node_id)
             continue
         apply_score(ls, node_id, "mcq_assessment", {
-            "score": 100,
-            "feedback": "Passed the diagnostic assessment for this skill.",
+            "score": ASSESSMENT_PASS_SCORE,
+            "feedback": "Head-start from the diagnostic assessment — confirm with the exercise to master.",
         })
     assessment["submitted"] = True
     return ls

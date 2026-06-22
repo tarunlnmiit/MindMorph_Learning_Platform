@@ -85,11 +85,14 @@ def _default():
     return default_node_state()
 
 
-def test_grade_marks_correct_nodes_mastered():
+def test_grade_marks_correct_nodes_in_progress_not_mastered():
+    from services.mastery import MASTERY_THRESHOLD
+
     ls = _session_with_quiz(_quiz(("a", 1), ("b", 0)))
     svc.grade_assessment(ls, [1, 3])  # a correct, b wrong
-    assert ls["node_state"]["a"]["status"] == "mastered"
-    assert ls["node_state"]["a"]["best_score"] == 100
+    # A correct MCQ is a head-start (in_progress), NOT full mastery — acing the quiz must not empty the path.
+    assert ls["node_state"]["a"]["status"] == "in_progress"
+    assert ls["node_state"]["a"]["best_score"] == svc.ASSESSMENT_PASS_SCORE < MASTERY_THRESHOLD
     assert ls["node_state"]["b"]["status"] == "available"  # wrong → untouched
     assert ls["assessment"]["submitted"] is True
 
@@ -113,7 +116,7 @@ def test_hallucinated_node_id_is_ignored_no_phantom():
     svc.grade_assessment(ls, [1, 0])  # both "correct"
     assert "ghost" not in ls["node_state"]            # no phantom
     assert set(ls["node_state"]) == {"a", "b"}        # counter stays sound
-    assert ls["node_state"]["a"]["status"] == "mastered"
+    assert ls["node_state"]["a"]["status"] == "in_progress"
 
 
 def test_no_quiz_raises():
