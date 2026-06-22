@@ -1,0 +1,32 @@
+[
+  {
+    "id": "python-lists",
+    "query": "Python lists",
+    "format_type": "A",
+    "source_facts": "Python lists are ordered, mutable sequences. They are written with square brackets. They can hold mixed types. Indexing is 0-based. append() adds one element to the end; extend() adds many. Lists are passed by reference."
+  },
+  {
+    "id": "http-status-codes",
+    "query": "HTTP status codes",
+    "format_type": "A",
+    "source_facts": "HTTP status codes are 3-digit numbers grouped by first digit: 2xx success, 3xx redirect, 4xx client error, 5xx server error. 200 = OK, 201 = Created, 301 = Moved Permanently, 404 = Not Found, 500 = Internal Server Error."
+  },
+  {
+    "id": "git-basics",
+    "query": "Git basics",
+    "format_type": "A",
+    "source_facts": "Git is a distributed version control system. A commit is a snapshot. git add stages changes; git commit records them; git push sends commits to a remote. A branch is a movable pointer to a commit. git merge combines branches."
+  },
+  {
+    "id": "sql-joins",
+    "query": "SQL joins",
+    "format_type": "A",
+    "source_facts": "A JOIN combines rows from two tables on a related column. INNER JOIN returns only matching rows. LEFT JOIN returns all left-table rows plus matches (NULLs where none). The ON clause specifies the join condition."
+  },
+  {
+    "id": "rest-api",
+    "query": "REST API principles",
+    "format_type": "A",
+    "source_facts": "REST is an architectural style over HTTP. Resources are identified by URLs. It uses HTTP methods: GET reads, POST creates, PUT/PATCH updates, DELETE removes. REST is stateless: each request carries all context. Responses are commonly JSON."
+  }
+]

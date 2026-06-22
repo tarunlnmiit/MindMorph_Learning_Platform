@@ -183,3 +183,10 @@ def test_tutor_agent_imports_clean():
     # Tutor imports without constructing the Groq model (lazy in _get_model).
     out = _import_output("agents.tutor.tutor_agent")
     assert "Traceback" not in out
+
+
+def test_eval_modules_import_clean():
+    # The eval runner + judge import without firing the LLM (judge model built only on construction).
+    _import_output("evals.runner")
+    _import_output("evals.judge")
+    _import_output("evals.run")
