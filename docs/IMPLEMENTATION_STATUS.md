@@ -159,12 +159,16 @@ Each item notes the **architecture section** it satisfies and the **code gap** i
 8. 🟡 **Onboarding + Dynamic Skill Assessment** — after a path is created, `SkillAssessmentAgent`
    (`agents/assessment/`, structured-output MCQ from the skill graph) generates a diagnostic quiz stored
    in `learning_session["assessment"]`. `POST /sessions/{user}/{session}/assessment` grades it:
-   correct answers **pre-seed those nodes `mastered`** via `services/mastery.apply_score` (unknown/
-   hallucinated `node_id`s are skipped — no phantom node_state). Web quiz UI (`web/components/AssessmentQuiz.tsx`)
+   correct answers give those nodes a **head-start (`in_progress`, score `ASSESSMENT_PASS_SCORE`=60), NOT
+   `mastered`** via `services/mastery.apply_score` — one MCQ isn't mastery, and full-mastering on a perfect
+   quiz would empty the path (the learner still studies; passing the node's exercise upgrades it). Unknown/
+   hallucinated `node_id`s skipped (no phantom node_state). Web quiz UI (`web/components/AssessmentQuiz.tsx`)
    gates the session page until submitted/skipped. Quiz generation is best-effort (failure → no quiz, path
-   still loads). Verified live (real LLM → valid quiz, all-correct → all nodes mastered). **Lightweight
-   onboarding** — real **social sign-in deferred to P3 #13** (auth layer); MVP login stays localStorage.
-   *Satisfies:* §2.
+   still loads). **Lightweight onboarding** — real **social sign-in deferred to P3 #13**; MVP login stays
+   localStorage. *Satisfies:* §2.
+   - **Exercise language caveat:** the auto-grader executes **Python only**, so the format-selector routes
+     non-Python skills (JS/React/Node/SQL, conceptual) to **`case_study`** (rubric-graded prose) — a MERN
+     node gets a written exercise, not a Python one. A real JS/Node execution harness is future work.
 9. ✅ **User material ingestion** — `POST /users/{user_id}/knowledge` (multipart PDF) → **PyMuPDF**
    extract (`rag/pdf.py`) → chunk → **per-user** RAG store (`rag/registry.py`), keyed by user_id, with a
    **web upload UI** (`web/components/KnowledgeUpload.tsx`). The content graph resolves the retriever
