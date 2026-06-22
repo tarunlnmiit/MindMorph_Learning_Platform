@@ -178,7 +178,11 @@ def start_session(user_query: str, format_type: str = "B") -> dict:
 
 
 def _run_lesson(
-    node: dict, format_type: str, prior_weaknesses: list, user_id: Optional[str] = None
+    node: dict,
+    format_type: str,
+    prior_weaknesses: list,
+    user_id: Optional[str] = None,
+    path_context: Optional[str] = None,
 ) -> dict:
     """Invoke the lesson graph for one skill node (content + embedded exercise)."""
     return _run_async(
@@ -189,6 +193,7 @@ def _run_lesson(
                 "format_type": format_type,
                 "prior_weaknesses": prior_weaknesses,
                 "user_id": user_id,
+                "path_context": path_context,
             }
         )
     )
@@ -221,7 +226,10 @@ def open_lesson(ls: dict, node_id: str, user_id: Optional[str] = None) -> dict:
         node = next(n for n in skill_graph["nodes"] if n["id"] == node_id)
         prior_weaknesses = ls["node_state"].get(node_id, {}).get("weaknesses", [])
         logger.info("service: composing lesson for node %s", node_id)
-        out = _run_lesson(node, ls.get("format_type", "B"), prior_weaknesses, user_id)
+        out = _run_lesson(
+            node, ls.get("format_type", "B"), prior_weaknesses, user_id,
+            path_context=ls.get("summary"),
+        )
         ls["lessons"][node_id] = {
             "content": out.get("content"),
             "exercise": {

@@ -87,7 +87,7 @@ def test_chunker_caps_size():
 # --- content graph wiring ----------------------------------------------------------------------
 
 class _FakeContent:
-    def generate_content(self, q, fmt, remediation=None):
+    def generate_content(self, q, fmt, remediation=None, context=None):
         return "DRAFT"
 
 
