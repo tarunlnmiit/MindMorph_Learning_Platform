@@ -165,15 +165,18 @@ export default function SessionPage() {
         )}
       </section>
 
-      <section className="mt-8">
-        <TutorChat
-          userId={userId!}
-          sessionId={sessionId}
-          nodeId={selected ?? null}
-          history={session.chat ?? []}
-          sessionKey={key}
-        />
-      </section>
+      <TutorChat
+        userId={userId!}
+        sessionId={sessionId}
+        nodeId={selected ?? null}
+        history={session.chat ?? []}
+        sessionKey={key}
+        contextLabel={
+          selected
+            ? session.skill_graph.nodes.find((n) => n.id === selected)?.label
+            : undefined
+        }
+      />
         </>
       )}
     </main>

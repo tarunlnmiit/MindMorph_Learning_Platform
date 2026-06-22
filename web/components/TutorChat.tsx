@@ -11,11 +11,21 @@ interface TutorChatProps {
   nodeId: string | null;
   history: ChatMessage[];
   sessionKey: unknown[]; // TanStack query key to invalidate after a turn persists
+  contextLabel?: string; // the current lesson the tutor is grounded in (shown in the header)
 }
 
-// AI Teaching Assistant (P3 #10): grounded, streaming chat about the open lesson + the learner's material.
-export function TutorChat({ userId, sessionId, nodeId, history, sessionKey }: TutorChatProps) {
+// AI Teaching Assistant (P3 #10): a floating, right-docked, streaming chat grounded in the open lesson
+// + the learner's uploaded material. Kept mounted (history/stream survive open/close).
+export function TutorChat({
+  userId,
+  sessionId,
+  nodeId,
+  history,
+  sessionKey,
+  contextLabel,
+}: TutorChatProps) {
   const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
   const [input, setInput] = useState("");
   const [pendingUser, setPendingUser] = useState<string | null>(null);
   const [streaming, setStreaming] = useState("");
@@ -43,25 +53,53 @@ export function TutorChat({ userId, sessionId, nodeId, history, sessionKey }: Tu
         setBusy(false);
         setPendingUser(null);
         setStreaming("");
-        // Persisted history is authoritative — refetch the session.
-        qc.invalidateQueries({ queryKey: sessionKey });
+        qc.invalidateQueries({ queryKey: sessionKey }); // persisted history is authoritative
       },
     });
   };
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="accent-ring fixed bottom-5 right-5 z-50 flex items-center gap-2 rounded-full px-5 py-3 font-medium text-ink-900 shadow-lg transition-transform hover:-translate-y-0.5"
+        style={{ background: "var(--color-gold)" }}
+      >
+        <span aria-hidden>💬</span> Ask the tutor
+      </button>
+    );
+  }
 
   const bubbles: ChatMessage[] = [...history];
   if (pendingUser) bubbles.push({ role: "user", content: pendingUser });
 
   return (
-    <section className="surface p-6">
-      <h2 className="text-lg font-semibold text-text-strong">Ask the teaching assistant</h2>
-      <p className="mt-1 text-xs text-text-muted">
-        Grounded in this lesson and your uploaded material.
-      </p>
+    <aside
+      className="surface fixed right-4 top-20 bottom-4 z-50 flex w-[380px] flex-col p-4 shadow-2xl max-sm:inset-x-2 max-sm:w-auto"
+      role="dialog"
+      aria-label="Teaching assistant"
+    >
+      <header className="flex items-start justify-between gap-3 border-b border-white/10 pb-3">
+        <div className="min-w-0">
+          <h2 className="text-base font-semibold text-text-strong">Teaching assistant</h2>
+          <p className="truncate text-xs text-text-muted">
+            Asking about: <span className="text-text">{contextLabel || "your learning path"}</span>
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setOpen(false)}
+          aria-label="Close chat"
+          className="accent-ring rounded-lg px-2 py-1 text-text-muted hover:text-text"
+        >
+          ✕
+        </button>
+      </header>
 
-      <div className="mt-4 flex max-h-[420px] flex-col gap-3 overflow-y-auto">
+      <div className="mt-3 flex flex-1 flex-col gap-3 overflow-y-auto pr-1">
         {bubbles.length === 0 && !streaming && (
-          <p className="text-sm text-text-muted">No questions yet — ask anything about this skill.</p>
+          <p className="text-sm text-text-muted">Ask anything about this lesson.</p>
         )}
         {bubbles.map((m, i) => (
           <Bubble key={i} role={m.role} content={m.content} />
@@ -71,13 +109,13 @@ export function TutorChat({ userId, sessionId, nodeId, history, sessionKey }: Tu
       </div>
 
       {error && (
-        <p className="mt-3 text-sm" style={{ color: "var(--color-review)" }}>
+        <p className="mt-2 text-sm" style={{ color: "var(--color-review)" }}>
           ⚠️ {error}
         </p>
       )}
 
       <form
-        className="mt-4 flex gap-3"
+        className="mt-3 flex gap-2"
         onSubmit={(e) => {
           e.preventDefault();
           void send();
@@ -87,20 +125,20 @@ export function TutorChat({ userId, sessionId, nodeId, history, sessionKey }: Tu
           value={input}
           onChange={(e) => setInput(e.target.value)}
           disabled={busy}
-          placeholder="e.g. Can you explain this with an example?"
+          placeholder="Ask a question…"
           aria-label="Message the teaching assistant"
-          className="accent-ring flex-1 rounded-xl border border-white/10 bg-ink-850 px-4 py-3 text-text-strong placeholder:text-text-muted/60 disabled:opacity-60"
+          className="accent-ring flex-1 rounded-xl border border-white/10 bg-ink-850 px-3 py-2.5 text-text-strong placeholder:text-text-muted/60 disabled:opacity-60"
         />
         <button
           type="submit"
           disabled={busy || !input.trim()}
-          className="accent-ring rounded-xl px-5 py-3 font-medium text-ink-900 disabled:opacity-50"
+          className="accent-ring rounded-xl px-4 py-2.5 font-medium text-ink-900 disabled:opacity-50"
           style={{ background: "var(--color-gold)" }}
         >
           Send
         </button>
       </form>
-    </section>
+    </aside>
   );
 }
 
@@ -109,9 +147,9 @@ function Bubble({ role, content }: { role: "user" | "assistant"; content: string
   return (
     <div className={isUser ? "flex justify-end" : "flex justify-start"}>
       <div
-        className="max-w-[85%] whitespace-pre-wrap rounded-xl px-4 py-2.5 text-sm"
+        className="max-w-[85%] whitespace-pre-wrap rounded-xl px-3 py-2 text-sm"
         style={{
-          background: isUser ? "var(--color-gold)" : "var(--color-ink-850, rgba(255,255,255,0.05))",
+          background: isUser ? "var(--color-gold)" : "rgba(255,255,255,0.05)",
           color: isUser ? "var(--color-ink-900, #0b0b0c)" : "var(--color-text)",
           border: isUser ? "none" : "1px solid rgba(255,255,255,0.1)",
         }}
