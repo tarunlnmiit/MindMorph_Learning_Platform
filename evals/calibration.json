@@ -1,0 +1,16 @@
+[
+  {
+    "id": "contradiction-should-score-low",
+    "query": "HTTP status codes",
+    "source_facts": "404 means Not Found. 200 means OK. 500 means Internal Server Error. 4xx are client errors; 5xx are server errors.",
+    "content": "HTTP status codes tell you what happened. A 404 means the request succeeded perfectly. 200 is the code for 'Not Found'. 500 errors are always caused by the client's browser, never the server. 4xx codes indicate the server is down.",
+    "expect_grounded": false
+  },
+  {
+    "id": "extra-correct-should-score-high",
+    "query": "HTTP status codes",
+    "source_facts": "404 means Not Found. 200 means OK. 4xx are client errors; 5xx are server errors.",
+    "content": "HTTP status codes are grouped by their first digit. 2xx means success — 200 OK and 201 Created. 3xx are redirects, like 301 Moved Permanently. 4xx are client errors: 404 Not Found, 403 Forbidden, 429 Too Many Requests. 5xx are server errors such as 502 Bad Gateway. The grouping helps clients react programmatically.",
+    "expect_grounded": true
+  }
+]

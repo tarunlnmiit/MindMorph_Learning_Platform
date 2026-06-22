@@ -70,11 +70,11 @@ backend, and infra (see roadmap below).
 |---|---|---|
 | Frontend | ✅ | **Next.js** (`web/`) is the product; legacy Streamlit `app.py` **retired** (P3 #12). JupyterLite in-browser scratchpad embedded in the lesson. |
 | Application Service | 🟡 | Agents + LangSmith prompt registry exist; **no** FastAPI, Celery, gateway, rate limiting. |
-| AI / LLM | 🟡 | **LangGraph** orchestration ✅ (CrewAI deferred). Grounding: live web (DuckDuckGo) **+ opt-in local RAG** (FastEmbed + InMemoryVectorStore, `rag/`) in the Content dual-path. **Vendor-selectable Model Router** ✅ (Groq ⇄ Claude-CLI, `config.get_chat_model`). Still **no** eval pipelines; RAG store is in-memory (pgvector later). **Prompt Registry**: ✅ via `prompts/prompt_registry_wrapper_method.py` (LangSmith). |
+| AI / LLM | 🟡 | **LangGraph** orchestration ✅ (CrewAI deferred). Grounding: live web (DuckDuckGo) **+ opt-in local RAG** (FastEmbed + InMemoryVectorStore, `rag/`) in the Content dual-path. **Vendor-selectable Model Router** ✅ (Groq ⇄ Claude-CLI, `config.get_chat_model`). **Eval pipeline** 🟡 — offline content-groundedness LLM-judge (`evals/`, `python -m evals.run`). **Prompt Registry**: ✅ via `prompts/prompt_registry_wrapper_method.py` (LangSmith). |
 | Data | 🟡 | **PostgreSQL** ✅ — learning sessions (JSONB, #6) + per-user RAG vectors (**pgvector**, #9). Still **no** Redis/S3/Kafka. |
 | Infrastructure | ⛔ | No K8s/Terraform/Prometheus/CI-CD. |
 | Analytics & Continuous Improvement | ⛔ | No telemetry pipeline, warehouse, or human-review loop. |
-| LLM Ops & Production | ⛔ | No model router, cost/latency observability, deployment pipeline. |
+| LLM Ops & Production | 🟡 | Model router ✅ + content-groundedness eval ✅ (`evals/`). Still **no** cost/latency observability or deployment pipeline. |
 | Security & Governance | ⛔ | No auth/RBAC/encryption/PII scrubbing. Only `.env` secrets + `.gitignore`. |
 
 ## 6. Supporting components
@@ -202,8 +202,12 @@ Each item notes the **architecture section** it satisfies and the **code gap** i
     *Satisfies:* §5.5, §5.6, §5.8.
 
 ### Cross-cutting
-- 🟡 **Test suite** — pytest started (`tests/`, 17 tests: graph routing/fan-in, content dual-path,
-  skill-graph render, import side-effect guards). Still well below the 80% target.
+- 🟡 **Test suite** — pytest (`tests/`, 185 green: graph routing/fan-in, content dual-path, skill-graph
+  render, RAG/ingestion/pgvector, assessment, tutor chat, import guards). Growing.
+- 🟡 **Eval pipeline** — `evals/`: offline **content-groundedness LLM-judge** (`python -m evals.run`,
+  `--calibrate` validates the judge discriminates contradiction vs extra-but-correct). Judges precision
+  (contradiction of curated source facts), not coverage. De-risks the Gate-2 "content trust" hard gate.
+  Deferred: grading-correctness harness (covered by `test_code_executor`), score-history tracking, CI wiring.
 - ✅ Fixed the package-name typo `agents/orchertrator/` → `agents/orchestrator/`.
 - ✅ **MCP calls are timeout-bounded** — every MCP network await (`get_tools`/`ainvoke`/`search_jobs`/
   `fetch_job_results`) is wrapped in `tools/mcp_timeout.with_mcp_timeout` (`asyncio.wait_for`, default
