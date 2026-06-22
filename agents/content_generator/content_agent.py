@@ -36,12 +36,15 @@ class ContentAgent:
         user_query: str,
         format_type: str = "C",
         remediation: Optional[str] = None,
+        context: Optional[str] = None,
     ) -> str:
         """
         Generates content based on the selected format.
         format_type: 'A' (Boost), 'B' (Builder), 'C' (Sprint)
         remediation: optional "focus on these gaps" guidance from a prior failed attempt.
                      When None (the default), behavior is identical to a plain generation.
+        context: optional learning-path goal. Keeps a prerequisite lesson in the path's language/tools
+                 (e.g. teach "Programming Fundamentals" in JavaScript for a MERN path, not Python).
         """
         if not user_query or not isinstance(user_query, str):
             raise ValueError("User query must be a non-empty string")
@@ -53,6 +56,19 @@ class ContentAgent:
 
         # Select prompt
         system_prompt = CONTENT_PROMPTS.get(format_type.upper(), CONTENT_PROMPTS["C"])
+
+        # Keep a prerequisite lesson consistent with the overall path: same language(s), tools, frameworks.
+        # Without this, a generic node like "Programming Fundamentals" defaults to Python even on a
+        # JavaScript/MERN path. Escape braces (same reason as remediation below).
+        if context:
+            safe_context = context.replace("{", "{{").replace("}", "}}")
+            system_prompt = (
+                f"{system_prompt}\n\n"
+                "LEARNING-PATH CONTEXT: this skill is one step toward the goal below. Teach it IN THAT "
+                "CONTEXT — use the SAME programming language(s), tools, and frameworks as the goal, and "
+                "consistent examples. Do NOT switch languages (e.g. never use Python examples for a "
+                f"JavaScript/web path):\n{safe_context}"
+            )
 
         # Score-aware regeneration: steer the lesson at the learner's specific gaps.
         # Phase 3: `remediation` now carries real LLM-generated weaknesses, which for a coding

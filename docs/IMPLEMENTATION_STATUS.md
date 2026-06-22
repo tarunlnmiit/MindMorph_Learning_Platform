@@ -166,6 +166,10 @@ Each item notes the **architecture section** it satisfies and the **code gap** i
    gates the session page until submitted/skipped. Quiz generation is best-effort (failure → no quiz, path
    still loads). **Lightweight onboarding** — real **social sign-in deferred to P3 #13**; MVP login stays
    localStorage. *Satisfies:* §2.
+   - **Path-language grounding:** lesson content is generated with the overall goal as `path_context`
+     (`generate_content(..., context=ls["summary"])` threaded route→lesson→content graph), so a generic
+     prerequisite like "Programming Fundamentals" is taught in the path's language (JavaScript for a MERN
+     path, not Python). Verified live (MERN ctx → JS, Python ctx → Python).
    - **Exercise language caveat:** the auto-grader executes **Python only**, so the format-selector routes
      non-Python skills (JS/React/Node/SQL, conceptual) to **`case_study`** (rubric-graded prose) — a MERN
      node gets a written exercise, not a Python one. A real JS/Node execution harness is future work.
