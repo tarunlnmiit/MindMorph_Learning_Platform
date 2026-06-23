@@ -57,6 +57,12 @@ export default function SessionPage() {
     onError: (e) => setErrorMsg(e.message),
   });
 
+  const flag = useMutation({
+    mutationFn: (nodeId: string) => api.flagLesson(userId!, sessionId, nodeId),
+    onSuccess: writeBack,
+    onError: (e) => setErrorMsg(e.message),
+  });
+
   if (ready && !userId) {
     router.push("/");
     return null;
@@ -157,6 +163,8 @@ export default function SessionPage() {
             nodeId={selected}
             grading={grade.isPending}
             onGrade={(solution) => grade.mutate({ nodeId: selected, solution })}
+            onFlag={() => flag.mutate(selected)}
+            flagging={flag.isPending}
           />
         ) : (
           <div className="surface flex min-h-[160px] items-center justify-center p-8 text-center text-text-muted">

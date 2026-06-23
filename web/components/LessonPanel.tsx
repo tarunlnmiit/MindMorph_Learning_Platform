@@ -13,11 +13,15 @@ export function LessonPanel({
   nodeId,
   onGrade,
   grading,
+  onFlag,
+  flagging,
 }: {
   session: LearningSession;
   nodeId: string;
   onGrade: (solution: string) => void;
   grading: boolean;
+  onFlag?: () => void;
+  flagging?: boolean;
 }) {
   const lesson = session.lessons[nodeId];
   const [solution, setSolution] = useState("");
@@ -26,6 +30,10 @@ export function LessonPanel({
   const exercise = lesson.exercise;
   const isCoding = (exercise?.format ?? "coding_challenge") === "coding_challenge";
   const lastFeedback = session.node_state[nodeId]?.last_feedback ?? null;
+  // Already flagged? Derived from the funnel timeline so it persists across reloads.
+  const flagged = (session.events ?? []).some(
+    (e) => e.stage === "content_flagged" && e.node_id === nodeId,
+  );
 
   return (
     <article className="surface p-7 md:p-10">
@@ -39,6 +47,23 @@ export function LessonPanel({
           <p className="text-text-muted">Lesson content could not be generated.</p>
         )}
       </div>
+
+      {/* Explicit content-quality signal (Gate-1): the direct "was this lesson wrong?" measure. */}
+      {onFlag && (
+        <div className="mt-6 flex items-center gap-3 border-t border-white/5 pt-5">
+          {flagged ? (
+            <p className="text-sm text-text-muted">Thanks — flagged for review.</p>
+          ) : (
+            <button
+              onClick={onFlag}
+              disabled={flagging}
+              className="accent-ring rounded-lg border border-white/10 px-4 py-1.5 text-sm text-text-muted transition-colors hover:text-text disabled:opacity-50"
+            >
+              {flagging ? "Sending…" : "👎 This lesson was off"}
+            </button>
+          )}
+        </div>
+      )}
 
       {exercise?.statement && (
         <section className="mt-10 rounded-2xl border border-white/10 bg-ink-850/60 p-6 md:p-7">

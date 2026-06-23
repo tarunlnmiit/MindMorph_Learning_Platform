@@ -68,6 +68,13 @@ export const api = {
     );
   },
 
+  flagLesson(userId: string, sessionId: string, nodeId: string, reason?: string) {
+    return req<SessionResponse>(
+      `/sessions/${encodeURIComponent(userId)}/${encodeURIComponent(sessionId)}/lessons/${encodeURIComponent(nodeId)}/flag`,
+      { method: "POST", body: JSON.stringify({ reason: reason ?? null }) },
+    );
+  },
+
   gradeAssessment(userId: string, sessionId: string, answers: number[]) {
     return req<SessionResponse>(
       `/sessions/${encodeURIComponent(userId)}/${encodeURIComponent(sessionId)}/assessment`,

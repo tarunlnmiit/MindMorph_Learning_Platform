@@ -205,3 +205,89 @@ def test_cached_lesson_and_usage_survive_persist_reload(monkeypatch):
     assert reloaded["usage"] == {
         "composes": 1, "cache_hits": 0, "tokens_in": 200, "tokens_out": 80, "est_cost_usd": 0.0003,
     }
+    # Funnel events ride in the same JSONB blob — survive the round-trip too.
+    stages = [e["stage"] for e in reloaded["events"]]
+    assert "session_created" in stages and "lesson_opened" in stages
+
+
+# --- funnel instrumentation (Gate-1) -----------------------------------------------------------
+
+def _stages(ls):
+    return [e["stage"] for e in ls.get("events", [])]
+
+
+def test_open_lesson_emits_lesson_opened_events(monkeypatch):
+    monkeypatch.setattr(svc, "_run_lesson", lambda *a, **k: ({"content": "x"}, _usage()))
+    ls = svc.new_learning_session(_scout_state(), "B")
+    assert _stages(ls) == ["session_created"]
+    svc.open_lesson(ls, "a")
+    svc.open_lesson(ls, "a")  # re-open = cache hit
+    opened = [e for e in ls["events"] if e["stage"] == "lesson_opened"]
+    assert [e["cache_hit"] for e in opened] == [False, True]
+
+
+def test_grade_emits_exercise_graded_and_mastered(monkeypatch):
+    monkeypatch.setattr(svc, "_run_lesson", lambda *a, **k: ({
+        "content": "c", "exercise_format": "coding_challenge",
+        "exercise_statement": "s", "grading_artifact": {"format": "coding_challenge", "unit_tests": []},
+    }, _usage()))
+    import agents.exercise.grader_agent as grader
+    monkeypatch.setattr(grader, "grade_submission", lambda fmt, sol, art: {"score": 100, "passed": 1})
+    monkeypatch.setattr(svc, "adapt_after_grade", lambda ls, nid: None)  # isolate event wiring
+    ls = svc.new_learning_session(_scout_state(), "B")
+    svc.open_lesson(ls, "a")
+    svc.grade(ls, "a", "sol")
+    assert "exercise_graded" in _stages(ls)
+    assert "node_mastered" in _stages(ls)
+    graded = next(e for e in ls["events"] if e["stage"] == "exercise_graded")
+    assert graded["score"] == 100.0 and graded["node_id"] == "a"
+
+
+def test_subforty_grade_emits_needs_review_and_regenerated(monkeypatch):
+    from agents.adaptation.adaptation_schema import GraphAdaptation
+    from agents.consensus.skill_graph_schema import SkillEdge, SkillNode
+
+    adaptation = GraphAdaptation(
+        new_nodes=[SkillNode(id="a_basics", label="A Basics", description="x", level="foundational")],
+        new_edges=[SkillEdge(source="a_basics", target="a", relation="prerequisite")],
+        remediation_focus=["foundations"],
+        rationale="break it down",
+    )
+    monkeypatch.setattr(svc, "_get_adaptation_agent", lambda: _FakeAgent(result=adaptation))
+    ls = _opened(monkeypatch, 20)
+    svc.grade(ls, "a", "sol")
+    assert "node_needs_review" in _stages(ls)
+    assert "lesson_regenerated" in _stages(ls)
+
+
+def test_path_completed_fires_once(monkeypatch):
+    """Single-node path: mastering the only node completes the path; re-grade must not duplicate."""
+    one_node = {
+        "route": "SCOUT",
+        "skill_graph": {"summary": "P", "nodes": [
+            {"id": "a", "label": "A", "description": "d", "level": "foundational"}], "edges": []},
+        "format_type": "B",
+    }
+    monkeypatch.setattr(svc, "_run_lesson", lambda *a, **k: ({
+        "content": "c", "exercise_format": "coding_challenge",
+        "exercise_statement": "s", "grading_artifact": {"format": "coding_challenge", "unit_tests": []},
+    }, _usage()))
+    import agents.exercise.grader_agent as grader
+    monkeypatch.setattr(grader, "grade_submission", lambda fmt, sol, art: {"score": 100, "passed": 1})
+    monkeypatch.setattr(svc, "adapt_after_grade", lambda ls, nid: None)
+    ls = svc.new_learning_session(one_node, "B")
+    svc.open_lesson(ls, "a")
+    svc.grade(ls, "a", "sol")
+    svc.grade(ls, "a", "sol again")
+    assert _stages(ls).count("path_completed") == 1
+
+
+def test_is_session_complete():
+    from services.completion import is_session_complete
+
+    ls = svc.new_learning_session(_scout_state(), "B")  # 2 nodes a→b, none mastered
+    assert is_session_complete(ls["skill_graph"], ls["node_state"]) is False
+    for nid in ("a", "b"):
+        ls["node_state"][nid]["status"] = "mastered"
+        ls["node_state"][nid]["best_score"] = 100
+    assert is_session_complete(ls["skill_graph"], ls["node_state"]) is True

@@ -133,3 +133,55 @@ def test_lesson_generation_failure_returns_503_not_500(client, monkeypatch):
     detail = r.json()["detail"]
     assert isinstance(detail, str) and "try again" in detail.lower()
     assert "secret" not in detail  # internal error text not leaked
+
+
+def test_compose_failure_records_event_before_503(client, monkeypatch):
+    sid = client.post("/sessions", json={"user_id": "u1", "query": "p"}).json()["session_id"]
+    monkeypatch.setattr(routes, "open_lesson", lambda ls, node_id, user_id=None: (_ for _ in ()).throw(RuntimeError("boom")))
+    assert client.post(f"/sessions/u1/{sid}/lessons/a").status_code == 503
+    # The failed attempt was persisted as a funnel signal.
+    after = client.get(f"/sessions/u1/{sid}").json()["learning_session"]
+    assert any(e["stage"] == "compose_failure" for e in after.get("events", []))
+
+
+def test_flag_endpoint_records_content_flagged(client):
+    sid = client.post("/sessions", json={"user_id": "u1", "query": "p"}).json()["session_id"]
+    r = client.post(f"/sessions/u1/{sid}/lessons/a/flag", json={"reason": "wrong language"})
+    assert r.status_code == 200
+    flagged = [e for e in r.json()["learning_session"]["events"] if e["stage"] == "content_flagged"]
+    assert len(flagged) == 1 and flagged[0]["node_id"] == "a" and flagged[0]["reason"] == "wrong language"
+
+
+def _seed(user_id, session_id, events):
+    _memory_singleton.save(user_id, session_id, {"events": events})
+
+
+def test_admin_funnel_requires_token(client, monkeypatch):
+    monkeypatch.setenv("MINDMORPH_ADMIN_TOKEN", "s3cret")
+    assert client.get("/admin/funnel").status_code == 403  # no header
+    assert client.get("/admin/funnel", headers={"x-admin-token": "wrong"}).status_code == 403
+
+
+def test_admin_funnel_disabled_without_env(client, monkeypatch):
+    monkeypatch.delenv("MINDMORPH_ADMIN_TOKEN", raising=False)
+    assert client.get("/admin/funnel", headers={"x-admin-token": "x"}).status_code == 503
+
+
+def test_admin_funnel_aggregates(client, monkeypatch):
+    monkeypatch.setenv("MINDMORPH_ADMIN_TOKEN", "s3cret")
+    _seed("u1", "s1", [
+        {"ts": "t", "stage": "session_created"},
+        {"ts": "t", "stage": "lesson_opened", "node_id": "a", "cache_hit": False},
+        {"ts": "t", "stage": "exercise_graded", "node_id": "a", "score": 90.0},
+        {"ts": "t", "stage": "path_completed"},
+    ])
+    _seed("u2", "s2", [
+        {"ts": "t", "stage": "session_created"},
+        {"ts": "t", "stage": "content_flagged", "node_id": "a"},
+    ])
+    out = client.get("/admin/funnel", headers={"x-admin-token": "s3cret"}).json()
+    assert out["total_sessions"] == 2
+    assert out["reached_grade"] == 1
+    assert out["completed"] == 1
+    assert out["content_flags_total"] == 1
+    assert out["sessions_reaching_stage"]["session_created"] == 2

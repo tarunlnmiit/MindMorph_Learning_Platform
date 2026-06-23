@@ -12,8 +12,14 @@ import json
 import logging
 from typing import Optional
 
-from services.completion import incomplete_prereq_labels, locked_node_ids, prereqs_by_node
+from services.completion import (
+    incomplete_prereq_labels,
+    is_session_complete,
+    locked_node_ids,
+    prereqs_by_node,
+)
 from services.cost import TokenMeter
+from services.events import STAGES, has_event, record_event
 from services.mastery import (
     MASTERY_THRESHOLD,
     REVIEW_THRESHOLD,
@@ -149,7 +155,10 @@ def new_learning_session(final_state: dict, format_type: str) -> Optional[dict]:
         "selected_node": None,
         "chat": [],  # AI Teaching Assistant turns (P3 #10): list of {role, content}
         "usage": _empty_usage(),  # cost/cache accounting (unit-economics)
+        "events": [],  # funnel timeline (Gate-1 observability)
     }
+    record_event(ls, STAGES.SESSION_CREATED,
+                 node_count=len(skill_graph["nodes"]), format_type=format_type)
     # Diagnostic onboarding quiz (P2 #8): correct answers later pre-seed mastered nodes. Best-effort —
     # omitted entirely if generation fails, so the path still loads (frontend shows the graph directly).
     assessment = _run_assessment(skill_graph)
@@ -264,9 +273,11 @@ def open_lesson(ls: dict, node_id: str, user_id: Optional[str] = None) -> dict:
             node_id, lesson_usage["tokens_in"], lesson_usage["tokens_out"], lesson_usage["est_cost_usd"],
             " (usage unreported)" if lesson_usage["unknown"] else "",
         )
+        record_event(ls, STAGES.LESSON_OPENED, node_id=node_id, cache_hit=False)
     else:
         usage["cache_hits"] += 1
         logger.info("service: lesson %s HIT (cache_hits=%d)", node_id, usage["cache_hits"])
+        record_event(ls, STAGES.LESSON_OPENED, node_id=node_id, cache_hit=True)
     return ls
 
 
@@ -314,6 +325,7 @@ def adapt_after_grade(ls: dict, node_id: str) -> None:
         # exercise, so the old grade panel would otherwise render a stale, mismatched result.
         ls["node_state"][node_id] = {**state, "weaknesses": focus, "last_feedback": None}
         ls["lessons"].pop(node_id, None)
+        record_event(ls, STAGES.LESSON_REGENERATED, node_id=node_id, focus=focus)
 
 
 def grade(ls: dict, node_id: str, solution: str) -> dict:
@@ -335,7 +347,23 @@ def grade(ls: dict, node_id: str, solution: str) -> dict:
     result = grade_submission(fmt, solution, artifact)
     if result is not None:
         apply_score(ls, node_id, fmt, result)
+        score = float(result.get("score", 0.0) or 0.0)
+        record_event(ls, STAGES.EXERCISE_GRADED, node_id=node_id, score=score,
+                     passed=bool(result.get("passed")))
+        # Read the graded node's status BEFORE adapt_after_grade — adaptation only adds new prerequisite
+        # nodes, it never changes the graded node's own status, so this snapshot is the final one.
+        status = ls["node_state"].get(node_id, {}).get("status")
+        if status == "mastered":
+            record_event(ls, STAGES.NODE_MASTERED, node_id=node_id)
+        elif status == "needs_review":
+            record_event(ls, STAGES.NODE_NEEDS_REVIEW, node_id=node_id)
+        # adapt_after_grade may emit lesson_regenerated and mutate the graph; run it before the
+        # completion check so a freshly-added remedial prerequisite correctly blocks "complete".
         adapt_after_grade(ls, node_id)
+        if not has_event(ls, STAGES.PATH_COMPLETED) and is_session_complete(
+            ls["skill_graph"], ls["node_state"]
+        ):
+            record_event(ls, STAGES.PATH_COMPLETED)
     return ls
 
 
@@ -354,6 +382,7 @@ def grade_assessment(ls: dict, answers: list[int]) -> dict:
     if len(answers) != len(questions):
         raise ValueError(f"Expected {len(questions)} answers, got {len(answers)}.")
 
+    correct = 0
     for q, ans in zip(questions, answers):
         if ans != q.get("correct_index"):
             continue  # wrong or skipped (-1) → leave node available
@@ -367,7 +396,9 @@ def grade_assessment(ls: dict, answers: list[int]) -> dict:
             "score": ASSESSMENT_PASS_SCORE,
             "feedback": "Head-start from the diagnostic assessment — confirm with the exercise to master.",
         })
+        correct += 1
     assessment["submitted"] = True
+    record_event(ls, STAGES.ASSESSMENT_SUBMITTED, total=len(questions), correct=correct)
     return ls
 
 

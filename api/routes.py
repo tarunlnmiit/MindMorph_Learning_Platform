@@ -6,15 +6,18 @@ that mutates the dict → save the whole dict back → return it. The repository
 """
 import json
 import logging
+import os
+import secrets
 import uuid
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, Header, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
 from api.schemas import (
     AssessmentAnswersRequest,
     ChatRequest,
     CreateSessionRequest,
+    FlagRequest,
     GradeRequest,
     IngestResponse,
     SessionMeta,
@@ -22,6 +25,7 @@ from api.schemas import (
     StartSessionResponse,
 )
 from persistence.repository import get_default_repository
+from services.events import STAGES, funnel_summary, record_event
 from services.learning_service import (
     LockedNodeError,
     build_tutor_messages,
@@ -97,6 +101,9 @@ def open_node_lesson(user_id: str, session_id: str, node_id: str) -> SessionResp
         raise HTTPException(status_code=409, detail={"error": "locked", "pending": e.pending})
     except Exception as e:
         # Lesson compose is LLM-backed (content + exercise) — transient failure ⇒ 503, not 500.
+        # Record the failed attempt (a funnel/content signal) and persist before surfacing the 503.
+        record_event(ls, STAGES.COMPOSE_FAILURE, node_id=node_id, error=type(e).__name__)
+        repo.save(user_id, session_id, ls)
         raise _service_unavailable("open_lesson", e)
     repo.save(user_id, session_id, ls)
     return SessionResponse(session_id=session_id, learning_session=ls)
@@ -185,6 +192,53 @@ def grade_node(user_id: str, session_id: str, node_id: str, req: GradeRequest) -
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         # Grading itself is deterministic, but adaptation/regeneration is LLM-backed — guard anyway.
+        record_event(ls, STAGES.GRADE_FAILURE, node_id=node_id, error=type(e).__name__)
+        repo.save(user_id, session_id, ls)
         raise _service_unavailable("grade", e)
     repo.save(user_id, session_id, ls)
     return SessionResponse(session_id=session_id, learning_session=ls)
+
+
+@router.post("/sessions/{user_id}/{session_id}/lessons/{node_id}/flag", response_model=SessionResponse)
+def flag_lesson(
+    user_id: str, session_id: str, node_id: str, req: FlagRequest
+) -> SessionResponse:
+    """Record an explicit learner 'this lesson was off' flag — the direct content-quality signal."""
+    repo = get_default_repository()
+    ls = _load_or_404(repo, user_id, session_id)
+    record_event(ls, STAGES.CONTENT_FLAGGED, node_id=node_id, reason=req.reason)
+    repo.save(user_id, session_id, ls)
+    return SessionResponse(session_id=session_id, learning_session=ls)
+
+
+@router.get("/admin/funnel")
+def admin_funnel(x_admin_token: str | None = Header(default=None)) -> dict:
+    """Aggregate the Gate-1 funnel across every session (operator view).
+
+    Loads full session blobs across all users → shared-secret gated via the ``x-admin-token`` header
+    against ``MINDMORPH_ADMIN_TOKEN``. Returns 503 if the token isn't configured (fail closed), 403 on
+    mismatch. Real RBAC lands with auth in P3 #13.
+    """
+    expected = os.environ.get("MINDMORPH_ADMIN_TOKEN")
+    if not expected:
+        raise HTTPException(status_code=503, detail="Admin funnel disabled (MINDMORPH_ADMIN_TOKEN unset).")
+    # Constant-time compare: `!=` short-circuits and leaks the token byte-by-byte under timing analysis.
+    if not x_admin_token or not secrets.compare_digest(x_admin_token, expected):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    sessions = get_default_repository().list_all()
+    summaries = [funnel_summary(ls) for _, _, ls in sessions]
+    stage_reach: dict[str, int] = {}
+    for s in summaries:
+        for stage in s["stage_counts"]:
+            stage_reach[stage] = stage_reach.get(stage, 0) + 1
+    return {
+        "total_sessions": len(summaries),
+        "reached_grade": sum(1 for s in summaries if s["reached_grade"]),
+        "completed": sum(1 for s in summaries if s["completed"]),
+        "sessions_reaching_stage": stage_reach,  # how many sessions hit each stage (the funnel)
+        "low_score_total": sum(s["low_score_count"] for s in summaries),
+        "regenerations_total": sum(s["regenerations"] for s in summaries),
+        "content_flags_total": sum(s["content_flags"] for s in summaries),
+        "failures_total": sum(s["failures"] for s in summaries),
+    }

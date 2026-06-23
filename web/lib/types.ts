@@ -89,6 +89,14 @@ export interface ChatMessage {
   content: string;
 }
 
+// Funnel timeline entry (services/events.py). Loosely typed — only the fields the UI reads.
+export interface LearningEvent {
+  ts: string;
+  stage: string;
+  node_id?: string;
+  [key: string]: unknown;
+}
+
 export interface LearningSession {
   skill_graph: SkillGraph;
   summary?: string | null;
@@ -100,6 +108,7 @@ export interface LearningSession {
   selected_node?: string | null;
   assessment?: Assessment | null;
   chat?: ChatMessage[];
+  events?: LearningEvent[];
 }
 
 export interface SessionMeta {

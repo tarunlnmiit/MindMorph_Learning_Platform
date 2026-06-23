@@ -68,6 +68,19 @@ def complete_node_ids(skill_graph: dict, node_state: dict) -> set:
     return {nid for nid in prereqs if _complete(nid)}
 
 
+def is_session_complete(skill_graph: dict, node_state: dict) -> bool:
+    """True when every node in the graph is fully complete (the whole path is mastered).
+
+    Used to fire the ``path_completed`` funnel event once the learner finishes. Reuses the memoized
+    ``complete_node_ids`` derivation so the definition of "complete" stays single-sourced.
+    """
+    nodes = skill_graph.get("nodes", [])
+    if not nodes:
+        return False
+    all_ids = {n["id"] for n in nodes}
+    return complete_node_ids(skill_graph, node_state) >= all_ids
+
+
 def _remediation_locked(skill_graph: dict, node_state: dict, complete: set) -> set:
     """Nodes deterministically locked by a sub-40 grade (``remediation_pending``), independent of the
     LLM. The flag locks the node UNTIL its remedial prerequisites exist AND are all complete — so a
