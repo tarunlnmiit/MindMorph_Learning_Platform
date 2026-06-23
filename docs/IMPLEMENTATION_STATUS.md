@@ -210,8 +210,19 @@ Each item notes the **architecture section** it satisfies and the **code gap** i
     *Satisfies:* §5.5, §5.6, §5.8.
 
 ### Cross-cutting
-- 🟡 **Test suite** — pytest (`tests/`, 189 green: graph routing/fan-in, content dual-path, skill-graph
-  render, RAG/ingestion/pgvector, assessment, tutor chat, cost/usage accounting, import guards). Growing.
+- 🟡 **Test suite** — pytest (`tests/`, 204 green: graph routing/fan-in, content dual-path, skill-graph
+  render, RAG/ingestion/pgvector, assessment, tutor chat, cost/usage accounting, funnel events, import
+  guards). Growing.
+- 🟡 **Funnel instrumentation (Gate-1)** — `services/events.py` appends a structured event to an
+  append-only `learning_session["events"]` timeline at every loop chokepoint (`session_created`,
+  `assessment_submitted`, `lesson_opened`, `exercise_graded`, `node_mastered`/`needs_review`,
+  `lesson_regenerated`, `path_completed`, `compose_failure`/`grade_failure`, `content_flagged`).
+  `funnel_summary()` derives drop-off + content-quality aggregates on read (single source of truth).
+  Content quality measured two ways: **proxy** (low scores + regenerations) and an **explicit** learner
+  thumbs-down (`POST …/lessons/{node}/flag` → `content_flagged`, surfaced in `web/LessonPanel`).
+  Operator view `GET /admin/funnel` (shared-secret `x-admin-token` gate, fails closed) aggregates
+  across all sessions via `repo.list_all()`. Persists in the JSONB blob like `usage`. *Deferred:*
+  dashboards/Kafka (P3 #13), per-user analytics. De-risks the Gate-1 "watch real users" checkpoint.
 - 🟡 **Cost observability (unit economics)** — `services/cost.py` `TokenMeter` (a LangChain callback
   attached to the lesson-graph invocation in `_run_lesson`) aggregates token usage across all nested
   LLM calls; `estimate_cost` prices it off `MODEL_PRICES` (Groq `llama-3.3-70b` priced; Claude CLI
