@@ -96,7 +96,11 @@ async def test_scout_route_runs_full_learning_plan(monkeypatch):
     assert state["review_notes"] == "Looks coherent."
 
 
-async def test_content_route_runs_dual_path():
+async def test_content_route_runs_dual_path(monkeypatch):
+    # Routing/dual-path test asserts the synthesizer output verbatim → run with the §6.3 tail OFF
+    # (the tail is covered in test_content_tail.py). build_graph builds the content sub-graph
+    # internally with no tail injection, so without this it would fire the real example/visual agents.
+    monkeypatch.setenv("MINDMORPH_RICH_CONTENT", "0")
     orchestrator = MagicMock()
     orchestrator.route_query.return_value = MagicMock(Assigned_Agent="CONTENT", Reasoning="r")
 

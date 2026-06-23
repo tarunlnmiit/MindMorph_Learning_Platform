@@ -52,9 +52,9 @@ backend, and infra (see roadmap below).
 | Creative LLM (engaging draft) | ✅ | `content_agent.py` | Path A of the dual-path content graph. |
 | Factual Agents (live web search) | ✅ | `agents/factual/factual_agent.py` | Path B — live DuckDuckGo search (`ddgs`), degrades to None on failure. |
 | Synthesizer (merge creative + factual) | ✅ | `agents/synthesizer/synthesizer_agent.py` | "Master LLM" merges Path A + B; cites source URLs. Falls back to creative draft if no findings. |
-| Visual Generator (diagrams) | ⛔ | — | Not implemented (later — Content DAG §6.3 tail). |
-| Example Generator (code examples) | ⛔ | — | Not implemented. |
-| Assembler | ⛔ | — | Not implemented. |
+| Visual Generator (diagrams) | ✅ | `agents/visual_generator/` | Mermaid concept diagram; rejects non-diagram output → None. Rendered in `web/MermaidDiagram`. |
+| Example Generator (code examples) | ✅ | `agents/example_generator/` | One worked code example in the path's language (MERN→JS). Best-effort → None. |
+| Assembler | ✅ | `graph/content_graph.py` `assembler_node` | Deterministic (no LLM): appends present `## Worked example` / `## Visual overview` sections after the synthesized body. |
 
 ## 4. Status by Agent (Exercise-Generation DAG)
 
@@ -108,8 +108,9 @@ Each item notes the **architecture section** it satisfies and the **code gap** i
    Factual DuckDuckGo agent + Master synthesizer). *Satisfies:* §3.2, §6.3.
 
 > **Deferred from P0:** CrewAI crews (architecture calls for LangGraph **+** CrewAI; revisit when
-> role-based crews add value over plain parallel nodes). Visual/Example/Assembler tail of the
-> Content DAG (§6.3) also still open.
+> role-based crews add value over plain parallel nodes). The Visual/Example/Assembler tail of the
+> Content DAG (§6.3) is now **built** (`MINDMORPH_RICH_CONTENT`, default on): synthesizer →
+> [example ∥ visual] → deterministic assembler, with Mermaid rendered in the web lesson view.
 
 ### P1 — Close the core learning loop
 5. ✅ **Exercise pipeline** — Format Selector + GitHub/Blog/Dataset agents + Synthesizer +
