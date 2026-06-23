@@ -1,13 +1,23 @@
-"""Dual-path content graph: creative + factual fan out (distinct keys) -> synthesizer."""
+"""Dual-path content graph: creative + factual fan out (distinct keys) -> synthesizer.
+
+These assert the synthesizer output verbatim, so they run with the §6.3 tail OFF
+(MINDMORPH_RICH_CONTENT=0); the tail is covered separately in test_content_tail.py."""
 import os
 import sys
 from unittest.mock import MagicMock
+
+import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.append(ROOT)
 
 from graph.content_graph import build_content_graph
+
+
+@pytest.fixture(autouse=True)
+def _tail_off(monkeypatch):
+    monkeypatch.setenv("MINDMORPH_RICH_CONTENT", "0")
 
 
 async def test_content_graph_merges_both_paths():
