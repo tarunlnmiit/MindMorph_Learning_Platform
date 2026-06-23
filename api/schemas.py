@@ -6,7 +6,7 @@ only type the thin request envelopes and list metadata.
 """
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class CreateSessionRequest(BaseModel):
@@ -31,6 +31,20 @@ class AssessmentAnswersRequest(BaseModel):
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1)
     node_id: Optional[str] = None  # the open skill node, for grounding (optional)
+
+
+class FlagRequest(BaseModel):
+    # Optional "what was off" note. UNTRUSTED learner text — capped + whitespace-stripped here, but it
+    # is stored verbatim in the session events; any UI that renders it MUST HTML-escape (stored-XSS).
+    reason: Optional[str] = Field(default=None, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def _strip(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        v = v.strip()
+        return v or None
 
 
 class SessionMeta(BaseModel):

@@ -13,6 +13,9 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+# Safety cap for list_all() — it loads full session blobs into memory (operator/analytics only).
+LIST_ALL_LIMIT = 5000
+
 
 class LearningSessionRepository(ABC):
     """Storage-agnostic interface for persisting ``learning_session`` dicts."""
@@ -32,6 +35,11 @@ class LearningSessionRepository(ABC):
     @abstractmethod
     def delete(self, user_id: str, session_id: str) -> None:
         """Remove a session (no-op if absent)."""
+
+    @abstractmethod
+    def list_all(self) -> list[tuple[str, str, dict]]:
+        """Return every stored session as (user_id, session_id, learning_session). Operator/analytics
+        use only — loads full blobs across all users, so callers must gate access (see /admin/funnel)."""
 
 
 class PostgresLearningSessionRepository(LearningSessionRepository):
@@ -102,6 +110,21 @@ class PostgresLearningSessionRepository(LearningSessionRepository):
                 session.delete(row)
                 session.commit()
 
+    def list_all(self) -> list[tuple[str, str, dict]]:
+        from sqlalchemy import select
+
+        from persistence.db import get_sessionmaker
+        from persistence.models import LearningSessionRow
+
+        # Bounded: this materializes full JSONB blobs in memory, so cap it (operator/analytics use at
+        # prototype scale). A real analytics path would page or stream; if the cap is hit the
+        # /admin/funnel aggregate is a lower bound — fine for Gate-1 directional signal.
+        with get_sessionmaker()() as session:
+            rows = (
+                session.execute(select(LearningSessionRow).limit(LIST_ALL_LIMIT)).scalars().all()
+            )
+            return [(r.user_id, r.session_id, dict(r.data)) for r in rows]
+
 
 class InMemoryLearningSessionRepository(LearningSessionRepository):
     """Process-local store (no infra). Doubles as the test store and a dev fallback when no Postgres
@@ -142,6 +165,11 @@ class InMemoryLearningSessionRepository(LearningSessionRepository):
 
     def delete(self, user_id: str, session_id: str) -> None:
         self._store.pop((user_id, session_id), None)
+
+    def list_all(self) -> list[tuple[str, str, dict]]:
+        return [
+            (uid, sid, json.loads(row["data"])) for (uid, sid), row in self._store.items()
+        ]
 
 
 # A single in-memory instance shared across the process when the memory store is selected, so the API
