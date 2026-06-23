@@ -2,9 +2,13 @@
 #
 #   START --> creative (Path A: engaging draft)
 #   START --> factual  (Path B: live web search)
-#   creative, factual --> synthesizer (Master LLM merges both) --> END
+#   creative, factual --> synthesizer (Master LLM merges both)
+#   synthesizer --> example (worked code example) --> assembler
+#   synthesizer --> visual  (Mermaid diagram)     --> assembler --> END
 #
-# Creative and factual write distinct state keys, so the parallel fan-out needs no reducer.
+# Each fan-out writes distinct state keys, so the parallel branches need no reducer. The §6.3 tail
+# (example + visual generators → deterministic assembler) is gated by MINDMORPH_RICH_CONTENT (default
+# on); when off the graph stops at the synthesizer (today's behaviour, no added cost).
 
 import logging
 import sys
@@ -18,10 +22,17 @@ if PROJECT_ROOT not in sys.path:
 from langgraph.graph import StateGraph, START, END
 
 from agents.content_generator.content_agent import ContentAgent
+from agents.example_generator.example_generator_agent import ExampleGeneratorAgent
 from agents.factual.factual_agent import FactualAgent
 from agents.synthesizer.synthesizer_agent import SynthesizerAgent
+from agents.visual_generator.visual_generator_agent import VisualGeneratorAgent
 
 logger = logging.getLogger(__name__)
+
+
+def _rich_content_enabled() -> bool:
+    """§6.3 tail (example + visual + assembler) is on unless MINDMORPH_RICH_CONTENT is explicitly '0'."""
+    return os.getenv("MINDMORPH_RICH_CONTENT", "1") != "0"
 
 
 class ContentState(TypedDict, total=False):
@@ -33,6 +44,8 @@ class ContentState(TypedDict, total=False):
     creative_draft: str
     factual_findings: Optional[str]
     final_content: str
+    code_example: Optional[str]    # §6.3 tail: worked code example (Markdown fenced block)
+    visual_diagram: Optional[str]  # §6.3 tail: Mermaid concept diagram
 
 
 def _merge_findings(kb: Optional[str], web: Optional[str]) -> Optional[str]:
@@ -75,6 +88,8 @@ def build_content_graph(
     factual: Optional[Any] = None,
     synthesizer: Optional[Any] = None,
     retriever: Optional[Any] = None,
+    example: Optional[Any] = None,
+    visual: Optional[Any] = None,
 ):
     """Build and compile the dual-path content graph. Agents are injectable for tests.
 
@@ -82,11 +97,22 @@ def build_content_graph(
     omitted, the retriever is resolved **per request** from ``state['user_id']`` (the user's ingested
     material) or the global seed corpus if RAG is enabled. Retrieval *augments* web search, never
     replaces it.
+
+    ``example`` / ``visual`` are the §6.3-tail agents (worked example + Mermaid diagram). They are built
+    only when the tail is enabled (``MINDMORPH_RICH_CONTENT`` != '0'); injectable for tests.
+
+    Note: ``MINDMORPH_RICH_CONTENT`` is read **once, here, at build time**. The compiled graph is cached
+    per-process (``services.learning_service._get_lesson_graph``), so the flag is a deploy-time setting,
+    not a per-request toggle — changing the env after first build has no effect until restart.
     """
     content = content or ContentAgent(push_to_langsmith=False)
     factual = factual or FactualAgent()
     synthesizer = synthesizer or SynthesizerAgent(push_to_langsmith=False)
     injected_retriever = retriever
+    tail_on = _rich_content_enabled()
+    if tail_on:
+        example = example or ExampleGeneratorAgent(push_to_langsmith=False)
+        visual = visual or VisualGeneratorAgent(push_to_langsmith=False)
 
     def creative_node(state: ContentState) -> dict:
         fmt = state.get("format_type") or "B"
@@ -113,6 +139,34 @@ def build_content_graph(
         )
         return {"final_content": final}
 
+    def example_node(state: ContentState) -> dict:
+        if example is None:  # defensive: agent construction failed → degrade, don't crash the graph
+            return {"code_example": None}
+        return {
+            "code_example": example.generate_example(
+                state.get("final_content") or "", state["user_query"], state.get("path_context"),
+            )
+        }
+
+    def visual_node(state: ContentState) -> dict:
+        if visual is None:
+            return {"visual_diagram": None}
+        return {
+            "visual_diagram": visual.generate_diagram(
+                state.get("final_content") or "", state["user_query"],
+            )
+        }
+
+    def assembler_node(state: ContentState) -> dict:
+        # Deterministic merge (no LLM — the synthesizer already did the semantic merge). Appends only the
+        # sections that were produced, so a failed/None tail agent never blocks the lesson.
+        parts = [state.get("final_content") or ""]
+        if state.get("code_example"):
+            parts.append(f"## Worked example\n\n{state['code_example']}")
+        if state.get("visual_diagram"):
+            parts.append(f"## Visual overview\n\n{state['visual_diagram']}")
+        return {"final_content": "\n\n".join(p for p in parts if p)}
+
     g = StateGraph(ContentState)
     g.add_node("creative", creative_node)
     g.add_node("factual", factual_node)
@@ -122,6 +176,17 @@ def build_content_graph(
     g.add_edge(START, "factual")
     g.add_edge("creative", "synthesizer")
     g.add_edge("factual", "synthesizer")
-    g.add_edge("synthesizer", END)
+
+    if tail_on:
+        g.add_node("example", example_node)
+        g.add_node("visual", visual_node)
+        g.add_node("assembler", assembler_node)
+        g.add_edge("synthesizer", "example")
+        g.add_edge("synthesizer", "visual")
+        g.add_edge("example", "assembler")
+        g.add_edge("visual", "assembler")
+        g.add_edge("assembler", END)
+    else:
+        g.add_edge("synthesizer", END)
 
     return g.compile()
