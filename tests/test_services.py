@@ -13,6 +13,12 @@ import pytest
 from services import learning_service as svc
 
 
+def _usage(tokens_in=100, tokens_out=50, cost=0.0001):
+    """Canned TokenMeter.totals() for stubbed _run_lesson mocks (now returns (out, usage))."""
+    return {"tokens_in": tokens_in, "tokens_out": tokens_out, "est_cost_usd": cost,
+            "by_model": {}, "unknown": False}
+
+
 def _scout_state():
     return {
         "route": "SCOUT",
@@ -43,7 +49,7 @@ def test_new_learning_session_none_without_nodes():
 
 
 def test_open_lesson_blocks_locked_node(monkeypatch):
-    monkeypatch.setattr(svc, "_run_lesson", lambda *a, **k: {"content": "x"})
+    monkeypatch.setattr(svc, "_run_lesson", lambda *a, **k: ({"content": "x"}, _usage()))
     ls = svc.new_learning_session(_scout_state(), "B")
     # 'b' depends on 'a'; 'a' not mastered ⇒ 'b' locked.
     with pytest.raises(svc.LockedNodeError) as ei:
@@ -61,22 +67,31 @@ def test_open_lesson_composes_and_caches(monkeypatch):
             "exercise_format": "coding_challenge",
             "exercise_statement": "do it",
             "grading_artifact": {"format": "coding_challenge", "unit_tests": []},
-        }
+        }, _usage(tokens_in=120, tokens_out=60, cost=0.0002)
 
     monkeypatch.setattr(svc, "_run_lesson", fake_run_lesson)
     ls = svc.new_learning_session(_scout_state(), "B")
     svc.open_lesson(ls, "a")  # root node, unlocked
     assert ls["selected_node"] == "a"
     assert ls["lessons"]["a"]["content"] == "lesson for a"
+    # Miss records per-lesson + session usage.
+    assert ls["lessons"]["a"]["usage"]["tokens_in"] == 120
+    assert ls["usage"]["composes"] == 1
+    assert ls["usage"]["tokens_in"] == 120 and ls["usage"]["tokens_out"] == 60
+    assert ls["usage"]["est_cost_usd"] == 0.0002
     svc.open_lesson(ls, "a")  # re-open reuses cache, no second compose
     assert calls["n"] == 1
+    # Hit increments cache_hits, leaves compose count + cost untouched.
+    assert ls["usage"]["cache_hits"] == 1
+    assert ls["usage"]["composes"] == 1
+    assert ls["usage"]["est_cost_usd"] == 0.0002
 
 
 def test_grade_applies_mastery_and_runs_adaptation(monkeypatch):
-    monkeypatch.setattr(svc, "_run_lesson", lambda *a, **k: {
+    monkeypatch.setattr(svc, "_run_lesson", lambda *a, **k: ({
         "content": "c", "exercise_format": "coding_challenge",
         "exercise_statement": "s", "grading_artifact": {"format": "coding_challenge", "unit_tests": []},
-    })
+    }, _usage()))
     # Grade returns a perfect score; adaptation is stubbed (cover the wiring, not the LLM).
     import agents.exercise.grader_agent as grader
     monkeypatch.setattr(grader, "grade_submission", lambda fmt, sol, art: {"score": 100, "passed": 1, "total": 1})
@@ -112,10 +127,10 @@ class _FakeAgent:
 
 def _opened(monkeypatch, score):
     """Build a session with node 'a' opened and grading stubbed to a fixed score."""
-    monkeypatch.setattr(svc, "_run_lesson", lambda *a, **k: {
+    monkeypatch.setattr(svc, "_run_lesson", lambda *a, **k: ({
         "content": "c", "exercise_format": "coding_challenge",
         "exercise_statement": "s", "grading_artifact": {"format": "coding_challenge", "unit_tests": []},
-    })
+    }, _usage()))
     import agents.exercise.grader_agent as grader
     monkeypatch.setattr(grader, "grade_submission", lambda fmt, sol, art: {"score": score})
     ls = svc.new_learning_session(_scout_state(), "B")
@@ -163,3 +178,30 @@ def test_grade_sub40_adds_remedial_prereq_and_locks(monkeypatch):
     assert "a_basics" in ls["node_state"]            # remedial prereq seeded
     assert "a" in locked_node_ids(ls["skill_graph"], ls["node_state"])  # locked behind new prereq
     assert "a" not in ls["lessons"]                  # cached lesson invalidated for regeneration
+
+
+def test_cached_lesson_and_usage_survive_persist_reload(monkeypatch):
+    """The cache + cost accounting live in the JSONB session blob, so a save→reload round-trip (the
+    real cross-restart durability path) must return both intact. json.dumps in the repo also proves
+    the usage dict is JSONB-serializable."""
+    from persistence.repository import InMemoryLearningSessionRepository
+
+    monkeypatch.setattr(svc, "_run_lesson", lambda *a, **k: (
+        {"content": "lesson a", "exercise_format": "coding_challenge",
+         "exercise_statement": "s", "grading_artifact": {"format": "coding_challenge", "unit_tests": []}},
+        _usage(tokens_in=200, tokens_out=80, cost=0.0003),
+    ))
+    ls = svc.new_learning_session(_scout_state(), "B")
+    svc.open_lesson(ls, "a")
+
+    repo = InMemoryLearningSessionRepository()
+    repo.save("u1", "s1", ls)
+    reloaded = repo.get("u1", "s1")
+
+    assert reloaded["lessons"]["a"]["content"] == "lesson a"
+    assert reloaded["lessons"]["a"]["usage"]["tokens_in"] == 200
+    # Same cost-key name at both blob levels (per-lesson and session): est_cost_usd.
+    assert reloaded["lessons"]["a"]["usage"]["est_cost_usd"] == 0.0003
+    assert reloaded["usage"] == {
+        "composes": 1, "cache_hits": 0, "tokens_in": 200, "tokens_out": 80, "est_cost_usd": 0.0003,
+    }

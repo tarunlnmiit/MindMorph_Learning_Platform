@@ -210,8 +210,17 @@ Each item notes the **architecture section** it satisfies and the **code gap** i
     *Satisfies:* §5.5, §5.6, §5.8.
 
 ### Cross-cutting
-- 🟡 **Test suite** — pytest (`tests/`, 185 green: graph routing/fan-in, content dual-path, skill-graph
-  render, RAG/ingestion/pgvector, assessment, tutor chat, import guards). Growing.
+- 🟡 **Test suite** — pytest (`tests/`, 189 green: graph routing/fan-in, content dual-path, skill-graph
+  render, RAG/ingestion/pgvector, assessment, tutor chat, cost/usage accounting, import guards). Growing.
+- 🟡 **Cost observability (unit economics)** — `services/cost.py` `TokenMeter` (a LangChain callback
+  attached to the lesson-graph invocation in `_run_lesson`) aggregates token usage across all nested
+  LLM calls; `estimate_cost` prices it off `MODEL_PRICES` (Groq `llama-3.3-70b` priced; Claude CLI
+  placeholder = $0, flagged `unknown`). `open_lesson` records per-lesson usage on the cached entry and
+  accumulates `learning_session["usage"]` (`composes`, `cache_hits`, `tokens_in/out`, `est_cost_usd`),
+  logging each open HIT/MISS. Rides in the JSONB blob (persists across restart) + the existing
+  `SessionResponse`. Live: one compose ≈ 5.2k/2.5k tokens ≈ **$0.005** on Groq. Pairs with the
+  already-durable per-`node_id` lesson cache — together the two halves of the "$/active-user" hard
+  gate. *Deferred:* DAG/assessment/tutor cost, per-user aggregation, dashboards.
 - 🟡 **Eval pipeline** — `evals/`: offline **content-groundedness LLM-judge** (`python -m evals.run`,
   `--calibrate` validates the judge discriminates contradiction vs extra-but-correct). Judges precision
   (contradiction of curated source facts), not coverage. De-risks the Gate-2 "content trust" hard gate.
