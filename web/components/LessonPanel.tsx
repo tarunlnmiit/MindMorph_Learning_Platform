@@ -1,12 +1,25 @@
 "use client";
 
 import { useState } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { CodeEditor } from "./CodeEditor";
 import { GradeResult } from "./GradeResult";
+import { MermaidDiagram } from "./MermaidDiagram";
 import { Sandbox } from "./Sandbox";
 import type { LearningSession } from "@/lib/types";
+
+// Route ```mermaid fences (the §6.3 visual-generator output) to a real diagram renderer; everything
+// else falls through to react-markdown's default code rendering.
+const markdownComponents: Components = {
+  code(props) {
+    const { className, children } = props;
+    if (/\blanguage-mermaid\b/.test(className ?? "")) {
+      return <MermaidDiagram code={String(children).trim()} />;
+    }
+    return <code className={className}>{children}</code>;
+  },
+};
 
 export function LessonPanel({
   session,
@@ -42,7 +55,9 @@ export function LessonPanel({
       {/* The lesson markdown leads with its own <h1>, so no separate panel title (avoids duplicate). */}
       <div className="prose prose-invert prose-lg lesson-prose max-w-none">
         {lesson.content ? (
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{lesson.content}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+            {lesson.content}
+          </ReactMarkdown>
         ) : (
           <p className="text-text-muted">Lesson content could not be generated.</p>
         )}
