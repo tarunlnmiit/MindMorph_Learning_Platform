@@ -13,6 +13,7 @@ import logging
 from typing import Optional
 
 from services.completion import incomplete_prereq_labels, locked_node_ids, prereqs_by_node
+from services.cost import TokenMeter
 from services.mastery import (
     MASTERY_THRESHOLD,
     REVIEW_THRESHOLD,
@@ -27,6 +28,11 @@ from services.mastery import (
 ASSESSMENT_PASS_SCORE = (REVIEW_THRESHOLD + MASTERY_THRESHOLD) // 2
 
 logger = logging.getLogger(__name__)
+
+
+def _empty_usage() -> dict:
+    """Session-level cost/cache accumulator (unit-economics observability). Persists in the JSONB row."""
+    return {"composes": 0, "cache_hits": 0, "tokens_in": 0, "tokens_out": 0, "est_cost_usd": 0.0}
 
 # --- Lazy per-process graph/agent singletons --------------------------------------------------
 _orchestration_graph = None
@@ -142,6 +148,7 @@ def new_learning_session(final_state: dict, format_type: str) -> Optional[dict]:
         "lessons": {},
         "selected_node": None,
         "chat": [],  # AI Teaching Assistant turns (P3 #10): list of {role, content}
+        "usage": _empty_usage(),  # cost/cache accounting (unit-economics)
     }
     # Diagnostic onboarding quiz (P2 #8): correct answers later pre-seed mastered nodes. Best-effort —
     # omitted entirely if generation fails, so the path still loads (frontend shows the graph directly).
@@ -183,9 +190,14 @@ def _run_lesson(
     prior_weaknesses: list,
     user_id: Optional[str] = None,
     path_context: Optional[str] = None,
-) -> dict:
-    """Invoke the lesson graph for one skill node (content + embedded exercise)."""
-    return _run_async(
+) -> tuple[dict, dict]:
+    """Invoke the lesson graph for one skill node (content + embedded exercise).
+
+    Returns ``(out, usage)`` where ``usage`` is a ``TokenMeter.totals()`` dict measuring the token
+    cost of this compose (aggregated across all nested LLM calls).
+    """
+    meter = TokenMeter()
+    out = _run_async(
         _get_lesson_graph().ainvoke(
             {
                 "skill_label": node.get("label", ""),
@@ -194,9 +206,11 @@ def _run_lesson(
                 "prior_weaknesses": prior_weaknesses,
                 "user_id": user_id,
                 "path_context": path_context,
-            }
+            },
+            config={"callbacks": [meter]},
         )
     )
+    return out, meter.totals()
 
 
 def open_lesson(ls: dict, node_id: str, user_id: Optional[str] = None) -> dict:
@@ -222,11 +236,13 @@ def open_lesson(ls: dict, node_id: str, user_id: Optional[str] = None) -> dict:
             raise LockedNodeError(node_id, pending)
 
     ls["selected_node"] = node_id
+    # Sessions created before usage tracking won't have the key; backfill so accounting never KeyErrors.
+    usage = ls.setdefault("usage", _empty_usage())
     if node_id not in ls["lessons"]:
         node = next(n for n in skill_graph["nodes"] if n["id"] == node_id)
         prior_weaknesses = ls["node_state"].get(node_id, {}).get("weaknesses", [])
         logger.info("service: composing lesson for node %s", node_id)
-        out = _run_lesson(
+        out, lesson_usage = _run_lesson(
             node, ls.get("format_type", "B"), prior_weaknesses, user_id,
             path_context=ls.get("summary"),
         )
@@ -237,7 +253,20 @@ def open_lesson(ls: dict, node_id: str, user_id: Optional[str] = None) -> dict:
                 "statement": out.get("exercise_statement"),
                 "grading_artifact": out.get("grading_artifact"),
             },
+            "usage": lesson_usage,
         }
+        usage["composes"] += 1
+        usage["tokens_in"] += lesson_usage["tokens_in"]
+        usage["tokens_out"] += lesson_usage["tokens_out"]
+        usage["est_cost_usd"] = round(usage["est_cost_usd"] + lesson_usage["est_cost_usd"], 6)
+        logger.info(
+            "service: lesson %s MISS tokens_in=%d out=%d cost=$%.4f%s",
+            node_id, lesson_usage["tokens_in"], lesson_usage["tokens_out"], lesson_usage["est_cost_usd"],
+            " (usage unreported)" if lesson_usage["unknown"] else "",
+        )
+    else:
+        usage["cache_hits"] += 1
+        logger.info("service: lesson %s HIT (cache_hits=%d)", node_id, usage["cache_hits"])
     return ls
 
 
