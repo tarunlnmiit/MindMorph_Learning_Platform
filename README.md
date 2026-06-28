@@ -83,3 +83,8 @@ python agents/content_generator/content_agent.py
     ```bash
     python agents/content_generator/content_agent.py
     ```
+
+
+---
+
+*I turn scattered AI capabilities into tools people can actually run. · Available for AI contract work → [github.com/tarunlnmiit](https://github.com/tarunlnmiit)*
