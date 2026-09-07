@@ -1,5 +1,69 @@
 # MindMorph Learning Platform
 
+<!-- DEMO_GIF_PLACEHOLDER: drop a demo GIF/screen recording here -->
+
+MindMorph turns a topic into a prerequisite-linked skill graph, generates each lesson on demand from
+a creative LLM and a web-grounded factual agent running in parallel, and grades your work — code by
+running its unit tests, case studies by an LLM rubric.
+
+## How the skill graph builds and adapts
+
+A LangGraph pipeline (Orchestrator → Scout → Academic/Market/Practical specialists → Consensus →
+Reviewer) turns a topic into the initial skill graph. Each node's lesson is generated the first time
+you open it, via a second DAG: a creative-writing agent and a web-grounded factual agent run in
+parallel, a synthesizer merges their output, then example and visual generators fill it out.
+
+Grading drives three deterministic outcomes, decided in Python, not the LLM:
+
+- **Score ≥ 80** — mastered. Downstream nodes that depended on it unlock.
+- **Score 40–79** — no graph change. You just retry the node.
+- **Score < 40** — the node is locked and the graph grows: an LLM proposes remedial sub-skill nodes,
+  which are inserted as new prerequisites beneath the failed node. Clearing them unlocks it again.
+
+The LLM only ever proposes *what* to add. The thresholds and the lock itself are plain Python
+(`services/mastery.py`). Adaptation is additive-only — it never renames, reorders, or deletes an
+existing node, so a struggling learner never loses progress already made. That invariant is enforced
+twice: as a prompt instruction, and mechanically in `apply_adaptation`
+(`graph/skill_graph_adapt.py`), which drops edges pointing at unknown ids and refuses to overwrite an
+existing node id. If the remediation LLM call fails outright, a `remediation_pending` flag still keeps
+the failed node locked — it's never silently left open. Lock state itself isn't stored anywhere; it's
+recomputed on every read from the graph plus mastery state (`services/completion.py`), so it can't
+drift out of sync.
+
+Code exercises are graded by running the submitted code's unit tests in a subprocess; non-Python
+exercises and case studies fall back to LLM rubric grading.
+
+See `docs/ARCHITECTURE.md` for the target design and `docs/IMPLEMENTATION_STATUS.md` for what's
+actually built today — they diverge in places (e.g. Kafka/Kubernetes/Pinecone in the target design
+aren't part of the running system). Tests: 214 passing.
+
+## Run it in two minutes
+
+The minimum viable setup needs one free API key and no infra — no Docker, no Postgres, no Alembic,
+no build step. (Steps 1-3 below set up the Python environment; skip ahead if you already have one.)
+
+1. `conda create -n mindmorph python=3.11 -y && conda activate mindmorph` (or a `venv` — see
+   [Environment Setup](#environment-setup)).
+2. `pip install -r requirements.txt`, then get a free key at
+   [console.groq.com](https://console.groq.com) and put it in a `.env` file in the root directory:
+
+    ```env
+    GROQ_API_KEY=your_api_key_here
+    ```
+
+3. Run the backend against the in-memory store, then the frontend in another terminal:
+
+    ```bash
+    # Backend
+    MINDMORPH_STORE=memory conda run -n mindmorph uvicorn api.main:app --port 8000
+
+    # Frontend, in another terminal
+    cd web && npm install && npm run dev   # http://localhost:3000
+    ```
+
+That's it — sessions live in memory for the process lifetime. See below for the durable
+Postgres/RAG setup.
+
 ## Environment Setup
 
 ### 1. Prerequisites
@@ -62,13 +126,13 @@ in-lesson scratchpad REPL.
 ## Running the Agents
 
 - Run orchestrator (recommended first):
-    - `python orchestrator_agent.py`
+    - `python agents/orchestrator/orchestrator_agent.py`
 - Run scout:
-    - `python scout_agent.py`
+    - `python agents/scout/scout_agent.py`
 - Run market:
-    - `python market_agent.py`
+    - `python agents/market/market_agent.py`
 - Run github MCP client:
-    - `python github_mcp_client.py`
+    - `python tools/github_mcp_client.py`
 
 ## Running the Content Generator
 

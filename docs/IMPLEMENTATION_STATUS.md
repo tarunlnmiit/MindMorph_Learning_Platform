@@ -14,20 +14,22 @@
 
 | | Today (as built) | Target (per architecture docs) |
 |---|---|---|
-| **Agent orchestration** | **LangGraph** state graph (`graph/learning_plan_graph.py`, `graph/content_graph.py`) — Learning-Plan + Content DAGs. CrewAI deferred (parallel LangGraph nodes used instead) | **LangGraph + CrewAI** — LangGraph state-graph/DAG control + CrewAI role-based specialist crews |
+| **Agent orchestration** | **LangGraph** state graph (`graph/learning_plan_graph.py`, `graph/content_graph.py`) — Learning-Plan + Content DAGs. CrewAI is a non-goal — parallel LangGraph nodes already cover the concurrency it would add | **LangGraph + CrewAI** — LangGraph state-graph/DAG control + CrewAI role-based specialist crews |
 | **Grounding / web search** | Live DuckDuckGo (`ddgs`) in the Content dual-path Factual agent | RAG pipelines + agentic web search (Playwright/Firecrawl) |
-| **LLM** | Single vendor: Groq `llama-3.3-70b-versatile` (`config.py`) | Multi-vendor **Model Router** (GPT, Claude, Gemini, Bedrock) |
-| **Frontend** | Streamlit (`app.py`) | Next.js 14 / React 18 + JupyterLite |
-| **Backend** | None (logic runs in Streamlit process) | FastAPI microservices + Celery/Redis workers |
-| **Memory / data** | None (stateless per run) | Pinecone (long-term) + Redis (short-term) + PostgreSQL + S3 |
-| **Grounding / RAG** | None | RAG pipelines + agentic web search (Playwright/Firecrawl) |
+| **LLM** | Groq-primary / local-Claude-CLI-fallback switch, `llama-3.3-70b-versatile` (`config.py`) — the CLI side is local-dev only, not deployable | Multi-vendor **Model Router** (GPT, Claude, Gemini, Bedrock) |
+| **Frontend** | **Next.js** (`web/`) | Next.js 14 / React 18 + JupyterLite |
+| **Backend** | **FastAPI** (`api/`) | FastAPI microservices + Celery/Redis workers |
+| **Memory / data** | **PostgreSQL** — learning sessions (JSONB) + per-user RAG vectors (pgvector); in-memory store for zero-infra dev (`MINDMORPH_STORE=memory`). No Redis/S3 | Pinecone (long-term) + Redis (short-term) + PostgreSQL + S3 |
+| **Grounding / RAG** | **Opt-in local RAG** (FastEmbed + pgvector/in-memory, `rag/`, `MINDMORPH_RAG=1`) — augments web search, never replaces it | RAG pipelines + agentic web search (Playwright/Firecrawl) |
 | **Observability** | LangSmith hooks (optional) | Prometheus/Grafana/OpenTelemetry + Prompt Registry feedback loop |
 
-The repo is a **working multi-agent prototype** with **P0 complete**: the Learning-Plan DAG
-(orchestrate → scout → academic/market/practical → consensus → reviewer → Skill Dependency Graph)
-and the dual-path Content DAG (creative + live web grounding → synthesizer) both run end-to-end on
-LangGraph. Still open: CrewAI (deferred), Exercise DAG + grading, persistence, RAG/Model Router,
-backend, and infra (see roadmap below).
+The repo is a **working multi-agent prototype** with **P0-P1 complete**: the Learning-Plan DAG
+(orchestrate → scout → academic/market/practical → consensus → reviewer → Skill Dependency Graph),
+the dual-path Content DAG (creative + live web grounding → synthesizer), the Exercise DAG + live
+grading, and the FastAPI + Postgres backend all run end-to-end. CrewAI is a non-goal — parallel
+LangGraph nodes already cover the concurrency it would add. Still open: multi-vendor LLM routing
+beyond the current Groq-primary/Claude-CLI-fallback switch, and the infra/observability layers
+(see roadmap below).
 
 ---
 
@@ -69,12 +71,12 @@ backend, and infra (see roadmap below).
 | Layer | Status | Notes |
 |---|---|---|
 | Frontend | ✅ | **Next.js** (`web/`) is the product; legacy Streamlit `app.py` **retired** (P3 #12). JupyterLite in-browser scratchpad embedded in the lesson. |
-| Application Service | 🟡 | Agents + LangSmith prompt registry exist; **no** FastAPI, Celery, gateway, rate limiting. |
-| AI / LLM | 🟡 | **LangGraph** orchestration ✅ (CrewAI deferred). Grounding: live web (DuckDuckGo) **+ opt-in local RAG** (FastEmbed + InMemoryVectorStore, `rag/`) in the Content dual-path. **Vendor-selectable Model Router** ✅ (Groq ⇄ Claude-CLI, `config.get_chat_model`). **Eval pipeline** 🟡 — offline content-groundedness LLM-judge (`evals/`, `python -m evals.run`). **Prompt Registry**: ✅ via `prompts/prompt_registry_wrapper_method.py` (LangSmith). |
+| Application Service | 🟡 | **FastAPI** (`api/`) exposes the loop over HTTP; agents + LangSmith prompt registry exist. Still **no** Celery, gateway, rate limiting. |
+| AI / LLM | 🟡 | **LangGraph** orchestration ✅ (CrewAI is a non-goal — parallel LangGraph nodes cover it). Grounding: live web (DuckDuckGo) **+ opt-in local RAG** (FastEmbed + InMemoryVectorStore, `rag/`) in the Content dual-path. **Groq-primary / local-Claude-CLI-fallback switch** ✅ (`config.get_chat_model`) — the CLI side is local-dev only, not deployable. **Eval pipeline** 🟡 — offline content-groundedness LLM-judge (`evals/`, `python -m evals.run`). **Prompt Registry**: ✅ via `prompts/prompt_registry_wrapper_method.py` (LangSmith). |
 | Data | 🟡 | **PostgreSQL** ✅ — learning sessions (JSONB, #6) + per-user RAG vectors (**pgvector**, #9). Still **no** Redis/S3/Kafka. |
 | Infrastructure | ⛔ | No K8s/Terraform/Prometheus/CI-CD. |
 | Analytics & Continuous Improvement | ⛔ | No telemetry pipeline, warehouse, or human-review loop. |
-| LLM Ops & Production | 🟡 | Model router ✅ + content-groundedness eval ✅ (`evals/`). Still **no** cost/latency observability or deployment pipeline. |
+| LLM Ops & Production | 🟡 | Vendor fallback switch ✅ + content-groundedness eval ✅ (`evals/`). Still **no** cost/latency observability or deployment pipeline. |
 | Security & Governance | ⛔ | No auth/RBAC/encryption/PII scrubbing. Only `.env` secrets + `.gitignore`. |
 
 ## 6. Supporting components
@@ -87,8 +89,8 @@ backend, and infra (see roadmap below).
 | Web search (DuckDuckGo) | ✅ | `agents/factual/factual_agent.py` | `ddgs` live search for the Content Factual path. |
 | Skill graph renderer | ✅ | `graph/skill_graph_render.py` | Deterministic SkillGraph JSON → Mermaid. |
 | LLM config | ✅ | `config.py` | Groq `llama-3.3-70b-versatile`, temp 0.1; validates `GROQ_API_KEY`. |
-| Streamlit UI | ✅ | `app.py` | Full Orchestration (SCOUT skill-graph + CONTENT dual-path, Mermaid render) + Individual Agent Test. |
-| Tests | 🟡 | `tests/` | 17 pytest tests (graph routing/fan-in, content dual-path, skill-graph render, import guards). Below 80% target. |
+| Next.js frontend | ✅ | `web/` | SCOUT skill-graph + CONTENT dual-path, Mermaid render, lesson view, grading. Legacy Streamlit `app.py` **retired** (P3 #12) — it no longer exists in the repo. |
+| Tests | 🟡 | `tests/` | 213 passed, 3 skipped across 28 files (graph routing/fan-in, content dual-path, skill-graph render, RAG/ingestion/pgvector, assessment, tutor chat, cost/usage, funnel events, import guards). |
 
 ---
 
@@ -97,9 +99,9 @@ backend, and infra (see roadmap below).
 Each item notes the **architecture section** it satisfies and the **code gap** it closes.
 
 ### P0 — Orchestration foundation ✅ COMPLETE
-1. ✅ **Migrated to LangGraph** (CrewAI deferred — parallel LangGraph nodes give the same concurrency
-   for now). State graphs encode the Learning-Plan + Content DAGs (§6): `graph/learning_plan_graph.py`,
-   `graph/content_graph.py`. *Satisfies:* §5.3 AI/LLM Layer.
+1. ✅ **Migrated to LangGraph** (CrewAI is a non-goal — parallel LangGraph nodes already give the
+   same concurrency). State graphs encode the Learning-Plan + Content DAGs (§6):
+   `graph/learning_plan_graph.py`, `graph/content_graph.py`. *Satisfies:* §5.3 AI/LLM Layer.
 2. ✅ **Academic & Practical are real agents**; GitHub MCP client wired into Practical
    (`agents/academic/`, `tools/github_mcp_client.py` now returns results).
 3. ✅ **Consensus + Reviewer agents** complete the Learning-Plan DAG and emit a real **Skill
@@ -107,8 +109,9 @@ Each item notes the **architecture section** it satisfies and the **code gap** i
 4. ✅ **Content generator wired** via the CONTENT route; **dual-path content** built (Creative LLM +
    Factual DuckDuckGo agent + Master synthesizer). *Satisfies:* §3.2, §6.3.
 
-> **Deferred from P0:** CrewAI crews (architecture calls for LangGraph **+** CrewAI; revisit when
-> role-based crews add value over plain parallel nodes). The Visual/Example/Assembler tail of the
+> **Non-goal, not deferred:** CrewAI crews. The architecture doc calls for LangGraph **+** CrewAI,
+> but parallel LangGraph nodes already cover the concurrency role-based crews would add — there is
+> no plan to add CrewAI. The Visual/Example/Assembler tail of the
 > Content DAG (§6.3) is now **built** (`MINDMORPH_RICH_CONTENT`, default on): synthesizer →
 > [example ∥ visual] → deterministic assembler, with Mermaid rendered in the web lesson view.
 
@@ -135,7 +138,7 @@ Each item notes the **architecture section** it satisfies and the **code gap** i
    state intact** (cross-process durability proof); DB-gated integration test guards the JSONB path. 108
    tests green. *Deferred:* Redis (JSONB suffices at prototype scale); re-pointing Streamlit at the API
    (#12 retires it); Pinecone. *Satisfies:* §5.2, §5.4. *Closes:* the stateless prototype.
-7. 🟡 **Model Router + RAG** — _RAG (grounding):_ `rag/` package adds a **local, no-API-key** retrieval
+7. 🟡 **Vendor fallback switch + RAG** — _RAG (grounding):_ `rag/` package adds a **local, no-API-key** retrieval
    arm. `rag/embeddings.py` wraps **FastEmbed** (ONNX `BAAI/bge-small-en-v1.5`, no torch) as a LangChain
    `Embeddings`; `rag/store.py` `RagStore` over `langchain_core` `InMemoryVectorStore` (chunk + `Source:`
    output mirrors `gather_facts`). `build_content_graph(..., retriever=)` merges KB chunks **+** web search
@@ -143,7 +146,7 @@ Each item notes the **architecture section** it satisfies and the **code gap** i
    web. Corpus = `knowledge_base/*.md|.txt` (P2 #9 uploads feed the same store later). **Opt-in**
    (`MINDMORPH_RAG=1`, `MINDMORPH_KNOWLEDGE_DIR`) so dev/tests never download the model; verified live
    (real FastEmbed indexed the seed corpus and retrieved on a semantic query). Remaining ⛔: pgvector at
-   scale, RAG in the exercise blog/dataset path, re-ranking. _Model Router:_
+   scale, RAG in the exercise blog/dataset path, re-ranking. _Vendor fallback switch:_
    `llm_providers.py` + `config.get_chat_model(tier, provider, fallback)`:
    **vendor-selectable**, two independent vendor choices (`groq` | `claude_cli`). **Primary** =
    `provider` arg or `MINDMORPH_LLM_PROVIDER` env (default `groq`); **fallback** = `fallback` arg or
@@ -211,7 +214,7 @@ Each item notes the **architecture section** it satisfies and the **code gap** i
     *Satisfies:* §5.5, §5.6, §5.8.
 
 ### Cross-cutting
-- 🟡 **Test suite** — pytest (`tests/`, 204 green: graph routing/fan-in, content dual-path, skill-graph
+- 🟡 **Test suite** — pytest (`tests/`, 213 passed, 3 skipped: graph routing/fan-in, content dual-path, skill-graph
   render, RAG/ingestion/pgvector, assessment, tutor chat, cost/usage accounting, funnel events, import
   guards). Growing.
 - 🟡 **Funnel instrumentation (Gate-1)** — `services/events.py` appends a structured event to an
