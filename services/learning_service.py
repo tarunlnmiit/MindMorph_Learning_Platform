@@ -167,16 +167,28 @@ def new_learning_session(final_state: dict, format_type: str) -> Optional[dict]:
     return ls
 
 
-def start_session(user_query: str, format_type: str = "B") -> dict:
-    """Run the orchestration graph for a query and return the routed payload.
+# Human-readable progress labels per LangGraph node, keyed by node name (see graph/learning_plan_graph.py).
+# Shared between the streaming create-session route and any future progress UI.
+STAGE_LABELS = {
+    "orchestrator": "Routing your request",
+    "scout": "Scout planning specialist queries",
+    "academic": "Academic agent researching",
+    "market": "Market agent analyzing job data",
+    "practical": "Practical agent finding projects",
+    "consensus": "Building consensus skill graph",
+    "reviewer": "Reviewing the skill graph",
+    "content": "Composing content",
+    "exercise": "Building your exercise",
+    "placeholder": "Finishing up",
+}
 
-    Returns ``{"route", "learning_session", "final_content", "exercise"}``. Only the SCOUT route
-    yields a persistable ``learning_session`` (the adaptive loop); CONTENT/EXERCISE are transient.
+
+def _route_final_state(final_state: dict, format_type: str) -> dict:
+    """Shape a finished orchestration-graph state into ``{route, learning_session, final_content,
+    exercise}``. Only the SCOUT route yields a persistable ``learning_session`` (the adaptive loop);
+    CONTENT/EXERCISE are transient. Shared by ``start_session`` and ``astream_session`` so the
+    CONTENT/EXERCISE short-circuit routing can never drift between the sync and streaming paths.
     """
-    logger.info("service: start_session (query=%r, format=%s)", user_query, format_type)
-    final_state = _run_async(
-        _get_orchestration_graph().ainvoke({"user_query": user_query, "format_type": format_type})
-    )
     route = final_state.get("route", "UNKNOWN")
     out = {"route": route, "learning_session": None, "final_content": None, "exercise": None}
     if route == "SCOUT":
@@ -191,6 +203,41 @@ def start_session(user_query: str, format_type: str = "B") -> dict:
                 "grading_artifact": final_state.get("grading_artifact"),
             }
     return out
+
+
+def start_session(user_query: str, format_type: str = "B") -> dict:
+    """Run the orchestration graph for a query and return the routed payload.
+
+    Returns ``{"route", "learning_session", "final_content", "exercise"}``. Only the SCOUT route
+    yields a persistable ``learning_session`` (the adaptive loop); CONTENT/EXERCISE are transient.
+    """
+    logger.info("service: start_session (query=%r, format=%s)", user_query, format_type)
+    final_state = _run_async(
+        _get_orchestration_graph().ainvoke({"user_query": user_query, "format_type": format_type})
+    )
+    return _route_final_state(final_state, format_type)
+
+
+async def astream_session(user_query: str, format_type: str = "B"):
+    """Async-native, streaming twin of ``start_session``.
+
+    Runs the SAME compiled orchestration graph via ``.astream(..., stream_mode="updates")`` on the
+    route's own event loop (no ``_run_async`` fresh-loop wrapper — this must be awaited directly from
+    an async caller). Yields ``{"stage": <node name>, "label": <human label>}`` as each LangGraph node
+    finishes, then a final ``{"result": <same shape as start_session's return>}``.
+
+    State keys are distinct per node (see graph/learning_plan_graph.py), so accumulating each node's
+    partial update into ``final_state`` reproduces exactly what ``ainvoke`` would have returned.
+    """
+    logger.info("service: astream_session (query=%r, format=%s)", user_query, format_type)
+    final_state: dict = {}
+    async for update in _get_orchestration_graph().astream(
+        {"user_query": user_query, "format_type": format_type}, stream_mode="updates"
+    ):
+        for node_name, node_output in update.items():
+            final_state.update(node_output or {})
+            yield {"stage": node_name, "label": STAGE_LABELS.get(node_name, node_name)}
+    yield {"result": _route_final_state(final_state, format_type)}
 
 
 def _run_lesson(
@@ -281,16 +328,20 @@ def open_lesson(ls: dict, node_id: str, user_id: Optional[str] = None) -> dict:
     return ls
 
 
-def adapt_after_grade(ls: dict, node_id: str) -> None:
+def adapt_after_grade(ls: dict, node_id: str) -> list[str]:
     """Phase 3 — close the loop: a graded node mutates the graph (remedial nodes / unlock edges) and,
     on a low score, invalidates the cached lesson so the next open regenerates against the gaps.
 
     Runs only when the latest grade pushed the node to needs_review or mastered. LLM-backed; any
     failure is best-effort (the grade + mastery already persisted). Mutates ls in place.
+
+    Returns the ids of any remedial/unlock nodes actually added (empty when adaptation didn't run or
+    added nothing) — the caller threads this back to the client so the graph rewire can be animated
+    instead of snapping to the new layout.
     """
     state = ls["node_state"].get(node_id, {})
     if state.get("status") not in ("needs_review", "mastered"):
-        return
+        return []
 
     result = state.get("last_feedback") or {}
     score = float(result.get("score", 0.0) or 0.0)
@@ -309,7 +360,7 @@ def adapt_after_grade(ls: dict, node_id: str) -> None:
         if adaptation is not None and state.get("status") == "mastered":
             break  # unlock path: edges-only adaptation is fine without new nodes
     if adaptation is None:
-        return
+        return []
 
     from graph.skill_graph_adapt import apply_adaptation
 
@@ -327,12 +378,16 @@ def adapt_after_grade(ls: dict, node_id: str) -> None:
         ls["lessons"].pop(node_id, None)
         record_event(ls, STAGES.LESSON_REGENERATED, node_id=node_id, focus=focus)
 
+    return new_ids
 
-def grade(ls: dict, node_id: str, solution: str) -> dict:
-    """Grade a node's exercise submission, capture mastery, and run adaptation. Returns ls.
+
+def grade(ls: dict, node_id: str, solution: str) -> tuple[dict, list[str]]:
+    """Grade a node's exercise submission, capture mastery, and run adaptation.
 
     Pulls the format + grading artifact from the cached lesson, so the caller passes only the raw
-    solution string. Mutates and returns ls (caller persists the whole session afterward).
+    solution string. Mutates and returns ``(ls, new_node_ids)`` (caller persists the whole session
+    afterward); ``new_node_ids`` are any remedial/unlock nodes adaptation just added (empty otherwise),
+    so callers can surface the rewire to the client instead of it looking like a silent snap.
     """
     lesson = ls["lessons"].get(node_id)
     if not lesson:
@@ -345,6 +400,7 @@ def grade(ls: dict, node_id: str, solution: str) -> dict:
 
     logger.info("service: grading %s submission for node %s", fmt, node_id)
     result = grade_submission(fmt, solution, artifact)
+    new_node_ids: list[str] = []
     if result is not None:
         apply_score(ls, node_id, fmt, result)
         score = float(result.get("score", 0.0) or 0.0)
@@ -359,12 +415,12 @@ def grade(ls: dict, node_id: str, solution: str) -> dict:
             record_event(ls, STAGES.NODE_NEEDS_REVIEW, node_id=node_id)
         # adapt_after_grade may emit lesson_regenerated and mutate the graph; run it before the
         # completion check so a freshly-added remedial prerequisite correctly blocks "complete".
-        adapt_after_grade(ls, node_id)
+        new_node_ids = adapt_after_grade(ls, node_id)
         if not has_event(ls, STAGES.PATH_COMPLETED) and is_session_complete(
             ls["skill_graph"], ls["node_state"]
         ):
             record_event(ls, STAGES.PATH_COMPLETED)
-    return ls
+    return ls, new_node_ids
 
 
 def grade_assessment(ls: dict, answers: list[int]) -> dict:

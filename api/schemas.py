@@ -64,3 +64,7 @@ class StartSessionResponse(BaseModel):
 class SessionResponse(BaseModel):
     session_id: str
     learning_session: dict[str, Any]
+    # Ids of any remedial/unlock nodes an adaptation just added to the graph (empty for every response
+    # except the grade call that triggered it) — lets the client animate the rewire instead of it
+    # looking like a silent snap to a new layout.
+    new_node_ids: list[str] = Field(default_factory=list)

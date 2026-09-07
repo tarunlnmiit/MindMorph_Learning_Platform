@@ -2,15 +2,23 @@
 
 import { useState } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
+import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
+import "highlight.js/styles/tokyo-night-dark.css";
 import { CodeEditor } from "./CodeEditor";
 import { GradeResult } from "./GradeResult";
 import { MermaidDiagram } from "./MermaidDiagram";
 import { Sandbox } from "./Sandbox";
 import type { LearningSession } from "@/lib/types";
 
-// Route ```mermaid fences (the §6.3 visual-generator output) to a real diagram renderer; everything
-// else falls through to react-markdown's default code rendering.
+// rehype-highlight runs before these component overrides and only colorizes languages it
+// recognizes; `ignoreMissing` makes it skip the ```mermaid fence untouched (no such grammar), so
+// this override still sees the raw diagram source as a plain string. Route mermaid fences to a
+// real diagram renderer; everything else falls through to react-markdown's (now highlighted)
+// default code rendering.
+const rehypeHighlightPlugins: [typeof rehypeHighlight, { ignoreMissing: boolean }][] = [
+  [rehypeHighlight, { ignoreMissing: true }],
+];
 const markdownComponents: Components = {
   code(props) {
     const { className, children } = props;
@@ -55,7 +63,11 @@ export function LessonPanel({
       {/* The lesson markdown leads with its own <h1>, so no separate panel title (avoids duplicate). */}
       <div className="prose prose-invert prose-lg lesson-prose max-w-none">
         {lesson.content ? (
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            rehypePlugins={rehypeHighlightPlugins}
+            components={markdownComponents}
+          >
             {lesson.content}
           </ReactMarkdown>
         ) : (

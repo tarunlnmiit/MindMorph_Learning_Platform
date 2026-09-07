@@ -10,7 +10,7 @@ import {
   Position,
   ReactFlow,
 } from "@xyflow/react";
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { layoutSkillGraph } from "@/lib/graphLayout";
 import { STATUS_STYLE, displayStatus, lockedNodeIds } from "@/lib/status";
 import type { LearningSession, NodeStatus } from "@/lib/types";
@@ -20,14 +20,17 @@ type SkillNodeData = {
   status: NodeStatus;
   locked: boolean;
   selected: boolean;
+  isNew: boolean;
 };
 
 // A custom node: surface card with a status dot + glow. Locked nodes are dimmed and non-interactive.
+// `isNew` gets a one-shot entrance animation on THIS inner card — never on the `.react-flow__node`
+// wrapper xyflow renders around it, which already carries its own position transition (globals.css).
 function SkillFlowNode({ data }: NodeProps<Node<SkillNodeData>>) {
   const style = STATUS_STYLE[data.status];
   return (
     <div
-      className="surface relative w-48 px-4 py-3"
+      className={`surface relative w-48 px-4 py-3 ${data.isNew ? "skill-node-enter" : ""}`}
       style={{
         opacity: data.locked ? 0.45 : 1,
         borderColor: data.selected ? "var(--color-gold)" : undefined,
@@ -67,10 +70,19 @@ export function SkillGraph({
   session: LearningSession;
   onOpen: (nodeId: string, locked: boolean) => void;
 }) {
+  // Ids seen on a prior render, so a mid-session remedial node (added by an LLM adaptation after a
+  // sub-40 grade) gets its entrance animation exactly once instead of on every recompute.
+  const seenNodeIds = useRef<Set<string>>(new Set());
+
   const { nodes, edges } = useMemo(() => {
     const graph = session.skill_graph;
     const status = displayStatus(graph, session.node_state);
     const locked = lockedNodeIds(graph, session.node_state);
+
+    // Read-only diff against the ref — StrictMode may invoke this factory twice per commit, and a
+    // useMemo factory must stay pure, so the ref is updated in the effect below instead of here.
+    const seen = seenNodeIds.current;
+    const newIds = new Set(graph.nodes.filter((n) => !seen.has(n.id)).map((n) => n.id));
 
     // Edge-aware layered layout (dagre): position by the prereq DAG, so remedial prerequisite nodes
     // added mid-session render left of the node they unlock and the graph reflows automatically.
@@ -85,6 +97,7 @@ export function SkillGraph({
           status: status[n.id] ?? "available",
           locked: locked.has(n.id),
           selected: session.selected_node === n.id,
+          isNew: newIds.has(n.id),
         },
       };
     });
@@ -99,6 +112,13 @@ export function SkillGraph({
 
     return { nodes: rfNodes, edges: rfEdges };
   }, [session]);
+
+  // Mark this render's ids as seen AFTER commit, so the next diff excludes them. Runs post-commit
+  // (not during render), so StrictMode's dev double-invoke is harmless — Set.add is idempotent.
+  useEffect(() => {
+    const seen = seenNodeIds.current;
+    for (const n of nodes) seen.add(n.id);
+  }, [nodes]);
 
   return (
     <div className="surface h-[560px] overflow-hidden">

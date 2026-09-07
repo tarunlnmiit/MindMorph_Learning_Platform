@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { api } from "@/lib/api";
@@ -68,19 +68,42 @@ function Dashboard({ userId, onSignOut }: { userId: string; onSignOut: () => voi
   const router = useRouter();
   const qc = useQueryClient();
   const [query, setQuery] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [stageLabel, setStageLabel] = useState<string | null>(null);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   const sessions = useQuery({
     queryKey: ["sessions", userId],
     queryFn: () => api.listSessions(userId),
   });
 
-  const create = useMutation({
-    mutationFn: () => api.createSession(userId, query),
-    onSuccess: (res) => {
-      qc.invalidateQueries({ queryKey: ["sessions", userId] });
-      if (res.session_id) router.push(`/session/${res.session_id}`);
-    },
-  });
+  async function handleCreate() {
+    if (!query.trim() || creating) return;
+    setCreating(true);
+    setCreateError(null);
+    setStageLabel(null);
+    try {
+      await api.startSessionStream(userId, query, "B", {
+        onStage: (_stage, label) => setStageLabel(label),
+        onDone: (res) => {
+          setCreating(false);
+          setStageLabel(null);
+          qc.invalidateQueries({ queryKey: ["sessions", userId] });
+          if (res.session_id) router.push(`/session/${res.session_id}`);
+        },
+        onError: (msg) => {
+          setCreating(false);
+          setStageLabel(null);
+          setCreateError(msg);
+        },
+      });
+    } catch {
+      // fetch itself rejected (API unreachable) — the callback-based errors above never fired.
+      setCreating(false);
+      setStageLabel(null);
+      setCreateError("Couldn’t reach the learning service. Is the API running?");
+    }
+  }
 
   return (
     <Shell>
@@ -97,7 +120,7 @@ function Dashboard({ userId, onSignOut }: { userId: string; onSignOut: () => voi
           className="mt-4 flex flex-col gap-3 sm:flex-row"
           onSubmit={(e) => {
             e.preventDefault();
-            if (query.trim()) create.mutate();
+            handleCreate();
           }}
         >
           <input
@@ -109,21 +132,25 @@ function Dashboard({ userId, onSignOut }: { userId: string; onSignOut: () => voi
           />
           <button
             type="submit"
-            disabled={create.isPending}
+            disabled={creating}
             className="accent-ring rounded-xl px-5 py-3 font-medium text-ink-900 disabled:opacity-60"
             style={{ background: "var(--color-gold)" }}
           >
-            {create.isPending ? "Building…" : "Generate"}
+            {creating ? "Building…" : "Generate"}
           </button>
         </form>
-        {create.isError && (
+        {createError && (
           <p className="mt-3 text-sm" style={{ color: "var(--color-review)" }}>
-            Couldn’t reach the learning service. Is the API running?
+            {createError}
           </p>
         )}
-        {create.isPending && (
-          <p className="mt-3 text-sm text-text-muted">
-            Orchestrating agents — this runs the full graph and can take a minute.
+        {creating && (
+          <p className="mt-3 flex items-center gap-2 text-sm text-text-muted">
+            <span
+              className="h-3 w-3 animate-spin rounded-full border-2 border-transparent"
+              style={{ borderTopColor: "var(--color-gold)", borderRightColor: "var(--color-gold)" }}
+            />
+            <span className="eyebrow mb-0">{stageLabel ?? "Starting agents"}</span>
           </p>
         )}
       </section>

@@ -88,6 +88,30 @@ body {
   display: none;
 }
 
+/* Adaptive skill graph rewire (remedial nodes on a sub-40 grade re-rank the whole dagre layout).
+   xyflow applies each node's position as an inline `transform` on this wrapper and never remounts it
+   (stable ids), so a single transition here is enough to glide EVERY existing node to its new spot
+   instead of snapping — no tween loop needed. */
+.react-flow__node {
+  transition: transform 300ms var(--ease-out-expo);
+}
+
+/* One-shot entrance for a newly-added remedial/unlock node, applied to the INNER card (never this
+   wrapper above — animating both would collide/fight over `transform`). */
+@keyframes skill-node-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.skill-node-enter {
+  animation: skill-node-enter 380ms var(--ease-out-expo);
+}
+
 /* ── Lesson prose (dark luxury) ────────────────────────────────────────────
    Readable rhythm + a clearly-separated monospace code block, so lessons stop
    reading as one mushed wall and code stands apart from prose. */

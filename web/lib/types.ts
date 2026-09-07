@@ -128,6 +128,9 @@ export interface StartSessionResponse {
 export interface SessionResponse {
   session_id: string;
   learning_session: LearningSession;
+  // Ids of any remedial/unlock nodes an adaptation just added (only non-empty on the grade response
+  // that triggered it). Optional: only SessionResponse carries it, and older cached payloads won't.
+  new_node_ids?: string[];
 }
 
 export interface IngestResponse {

@@ -28,6 +28,7 @@ from persistence.repository import get_default_repository
 from services.events import STAGES, funnel_summary, record_event
 from services.learning_service import (
     LockedNodeError,
+    astream_session,
     build_tutor_messages,
     grade,
     grade_assessment,
@@ -76,6 +77,37 @@ def create_session(req: CreateSessionRequest) -> StartSessionResponse:
         resp.session_id = session_id
         resp.learning_session = ls
     return resp
+
+
+@router.post("/sessions/stream")
+async def create_session_stream(req: CreateSessionRequest) -> StreamingResponse:
+    """Streaming twin of ``POST /sessions``: SSE progress (one frame per LangGraph node) instead of
+    one ~60s blocking wait. Terminal frame carries the same payload shape the sync route returns."""
+
+    async def gen():
+        try:
+            async for evt in astream_session(req.query, req.format_type):
+                if "result" not in evt:
+                    yield _sse({"stage": evt["stage"], "label": evt["label"]})
+                    continue
+                result = evt["result"]
+                resp = StartSessionResponse(
+                    route=result["route"],
+                    final_content=result.get("final_content"),
+                    exercise=result.get("exercise"),
+                )
+                ls = result.get("learning_session")
+                if ls is not None:
+                    session_id = uuid.uuid4().hex
+                    get_default_repository().save(req.user_id, session_id, ls, title=req.query)
+                    resp.session_id = session_id
+                    resp.learning_session = ls
+                yield _sse({"done": True, "session": resp.model_dump()})
+        except Exception:
+            logger.exception("api: create_session_stream failed")
+            yield _sse({"error": GEN_FAILED})
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
 
 
 @router.get("/sessions/{user_id}", response_model=list[SessionMeta])
@@ -186,8 +218,9 @@ def grade_node(user_id: str, session_id: str, node_id: str, req: GradeRequest) -
     """Grade a submission, capture mastery, and run adaptation; ``node_id`` is a query param."""
     repo = get_default_repository()
     ls = _load_or_404(repo, user_id, session_id)
+    new_node_ids: list[str] = []
     try:
-        ls = grade(ls, node_id, req.solution)
+        ls, new_node_ids = grade(ls, node_id, req.solution)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -196,7 +229,7 @@ def grade_node(user_id: str, session_id: str, node_id: str, req: GradeRequest) -
         repo.save(user_id, session_id, ls)
         raise _service_unavailable("grade", e)
     repo.save(user_id, session_id, ls)
-    return SessionResponse(session_id=session_id, learning_session=ls)
+    return SessionResponse(session_id=session_id, learning_session=ls, new_node_ids=new_node_ids)
 
 
 @router.post("/sessions/{user_id}/{session_id}/lessons/{node_id}/flag", response_model=SessionResponse)
