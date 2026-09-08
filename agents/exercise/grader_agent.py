@@ -37,7 +37,7 @@ class GraderAgent:
 
     def __init__(self, push_to_langsmith: bool = False):
         self.llm = llm
-        self.structured_llm = self.llm.with_structured_output(GradingArtifact)
+        self.structured_llm = self.llm.with_structured_output(GradingArtifact, method="json_schema")
         system_template = SystemMessagePromptTemplate.from_template(GRADER_SYSTEM_PROMPT)
         human_template = HumanMessagePromptTemplate.from_template(_HUMAN_TEMPLATE)
         self.chat_prompt = ChatPromptTemplate.from_messages([system_template, human_template])
@@ -117,7 +117,7 @@ def _grade_case_study(solution_text: str, artifact: dict) -> Optional[dict]:
     system_template = SystemMessagePromptTemplate.from_template(GRADER_RUBRIC_SCORING_SYSTEM_PROMPT)
     human_template = HumanMessagePromptTemplate.from_template(_RUBRIC_HUMAN_TEMPLATE)
     chat_prompt = ChatPromptTemplate.from_messages([system_template, human_template])
-    structured_llm = llm.with_structured_output(RubricScore)
+    structured_llm = llm.with_structured_output(RubricScore, method="json_schema")
 
     logger.info("Grader: scoring case-study submission against rubric")
     try:

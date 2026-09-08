@@ -16,7 +16,7 @@
 |---|---|---|
 | **Agent orchestration** | **LangGraph** state graph (`graph/learning_plan_graph.py`, `graph/content_graph.py`) — Learning-Plan + Content DAGs. CrewAI is a non-goal — parallel LangGraph nodes already cover the concurrency it would add | **LangGraph + CrewAI** — LangGraph state-graph/DAG control + CrewAI role-based specialist crews |
 | **Grounding / web search** | Live DuckDuckGo (`ddgs`) in the Content dual-path Factual agent | RAG pipelines + agentic web search (Playwright/Firecrawl) |
-| **LLM** | Groq-primary / local-Claude-CLI-fallback switch, `llama-3.3-70b-versatile` (`config.py`) — the CLI side is local-dev only, not deployable | Multi-vendor **Model Router** (GPT, Claude, Gemini, Bedrock) |
+| **LLM** | Groq-primary / local-Claude-CLI-fallback switch, `openai/gpt-oss-120b` (`config.py`) — the CLI side is local-dev only, not deployable | Multi-vendor **Model Router** (GPT, Claude, Gemini, Bedrock) |
 | **Frontend** | **Next.js** (`web/`) | Next.js 14 / React 18 + JupyterLite |
 | **Backend** | **FastAPI** (`api/`) | FastAPI microservices + Celery/Redis workers |
 | **Memory / data** | **PostgreSQL** — learning sessions (JSONB) + per-user RAG vectors (pgvector); in-memory store for zero-infra dev (`MINDMORPH_STORE=memory`). No Redis/S3 | Pinecone (long-term) + Redis (short-term) + PostgreSQL + S3 |
@@ -88,7 +88,7 @@ beyond the current Groq-primary/Claude-CLI-fallback switch, and the infra/observ
 | GitHub MCP client | ✅ | `tools/github_mcp_client.py` | `search_github_repositories` returns results; wired into the Practical node (degrades to None without a token). |
 | Web search (DuckDuckGo) | ✅ | `agents/factual/factual_agent.py` | `ddgs` live search for the Content Factual path. |
 | Skill graph renderer | ✅ | `graph/skill_graph_render.py` | Deterministic SkillGraph JSON → Mermaid. |
-| LLM config | ✅ | `config.py` | Groq `llama-3.3-70b-versatile`, temp 0.1; validates `GROQ_API_KEY`. |
+| LLM config | ✅ | `config.py` | Groq `openai/gpt-oss-120b`, temp 0.1; validates `GROQ_API_KEY`. |
 | Next.js frontend | ✅ | `web/` | SCOUT skill-graph + CONTENT dual-path, Mermaid render, lesson view, grading. Legacy Streamlit `app.py` **retired** (P3 #12) — it no longer exists in the repo. |
 | Tests | 🟡 | `tests/` | 213 passed, 3 skipped across 28 files (graph routing/fan-in, content dual-path, skill-graph render, RAG/ingestion/pgvector, assessment, tutor chat, cost/usage, funnel events, import guards). |
 
@@ -229,7 +229,7 @@ Each item notes the **architecture section** it satisfies and the **code gap** i
   dashboards/Kafka (P3 #13), per-user analytics. De-risks the Gate-1 "watch real users" checkpoint.
 - 🟡 **Cost observability (unit economics)** — `services/cost.py` `TokenMeter` (a LangChain callback
   attached to the lesson-graph invocation in `_run_lesson`) aggregates token usage across all nested
-  LLM calls; `estimate_cost` prices it off `MODEL_PRICES` (Groq `llama-3.3-70b` priced; Claude CLI
+  LLM calls; `estimate_cost` prices it off `MODEL_PRICES` (Groq `openai/gpt-oss-120b` priced; Claude CLI
   placeholder = $0, flagged `unknown`). `open_lesson` records per-lesson usage on the cached entry and
   accumulates `learning_session["usage"]` (`composes`, `cache_hits`, `tokens_in/out`, `est_cost_usd`),
   logging each open HIT/MISS. Rides in the JSONB blob (persists across restart) + the existing

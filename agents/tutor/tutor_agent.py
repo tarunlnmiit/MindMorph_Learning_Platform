@@ -1,6 +1,6 @@
 # AI Teaching Assistant (architecture §2, P3 #10): a streaming chat tutor grounded in the open lesson
-# and the learner's uploaded material. Streams via ChatGroq directly — the FallbackChatModel wrapper
-# only implements _generate, so it can't emit tokens incrementally (see the plan / IMPLEMENTATION_STATUS).
+# and the learner's uploaded material. Builds its own ChatOllama directly (rather than going through
+# `config.get_chat_model`) since it needs `.astream()` for token-by-token output.
 
 import logging
 import os
@@ -28,10 +28,10 @@ class TutorAgent:
 
     def _get_model(self) -> Any:
         if self._model is None:
-            from langchain_groq import ChatGroq
-            from config import model_name
+            from langchain_ollama import ChatOllama
+            from config import OLLAMA_HOST, OLLAMA_MODEL
 
-            self._model = ChatGroq(model=model_name, temperature=0.3)
+            self._model = ChatOllama(model=OLLAMA_MODEL, base_url=OLLAMA_HOST, temperature=0.3)
         return self._model
 
     def build_messages(

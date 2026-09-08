@@ -18,13 +18,12 @@ from langchain_core.outputs import LLMResult
 logger = logging.getLogger(__name__)
 
 # (input $/1M, output $/1M). Verify/update against current vendor pricing.
-# Groq llama-3.3-70b-versatile: published list price at time of writing.
-# Claude CLI aliases (haiku/sonnet) run through the *local* Claude Code OAuth session — a placeholder
-# backend with no metered API cost — so they price at 0.0 until a real API key is wired in.
+# The only backend is local Ollama (config.OLLAMA_MODEL) — self-hosted inference has no metered API
+# cost, so it honestly prices at 0.0. This is a real price, not an "unknown model" placeholder: the
+# meter still counts tokens and calls (see TokenMeter) so throughput/usage stays observable even
+# though $/user is now $0.
 MODEL_PRICES: dict[str, tuple[float, float]] = {
-    "llama-3.3-70b-versatile": (0.59, 0.79),
-    "haiku": (0.0, 0.0),
-    "sonnet": (0.0, 0.0),
+    "qwen2.5:14b": (0.0, 0.0),
 }
 
 _UNKNOWN_MODEL = "unknown"
@@ -46,7 +45,7 @@ def _model_name(result: LLMResult) -> str:
     name = output.get("model_name") or output.get("model")
     if name:
         return str(name)
-    # Fall back to the per-generation message metadata (ChatGroq stamps it there).
+    # Fall back to the per-generation message metadata (ChatOllama stamps it there).
     for batch in result.generations:
         for gen in batch:
             meta = getattr(getattr(gen, "message", None), "response_metadata", None) or {}

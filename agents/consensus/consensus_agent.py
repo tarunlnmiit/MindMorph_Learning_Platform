@@ -39,7 +39,7 @@ class ConsensusAgent:
 
     def __init__(self, push_to_langsmith: bool = False):
         self.llm = get_chat_model("complex")  # reasoning-heavy → Sonnet on fallback
-        self.structured_llm = self.llm.with_structured_output(SkillGraph)
+        self.structured_llm = self.llm.with_structured_output(SkillGraph, method="json_schema")
         system_template = SystemMessagePromptTemplate.from_template(CONSENSUS_SYSTEM_PROMPT)
         human_template = HumanMessagePromptTemplate.from_template(_HUMAN_TEMPLATE)
         self.chat_prompt = ChatPromptTemplate.from_messages([system_template, human_template])

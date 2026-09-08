@@ -35,23 +35,24 @@ exercises and case studies fall back to LLM rubric grading.
 
 See `docs/ARCHITECTURE.md` for the target design and `docs/IMPLEMENTATION_STATUS.md` for what's
 actually built today — they diverge in places (e.g. Kafka/Kubernetes/Pinecone in the target design
-aren't part of the running system). Tests: 214 passing.
+aren't part of the running system). Tests: 203 passed, 3 skipped.
 
 ## Run it in two minutes
 
-The minimum viable setup needs one free API key and no infra — no Docker, no Postgres, no Alembic,
-no build step. (Steps 1-3 below set up the Python environment; skip ahead if you already have one.)
+**No API key required.** The LLM is a local [Ollama](https://ollama.com) model — no vendor account,
+no key, no infra beyond Ollama itself — no Docker, no Postgres, no Alembic, no build step. (Steps 1-4
+below set up the environment; skip ahead if you already have one.)
 
 1. `conda create -n mindmorph python=3.11 -y && conda activate mindmorph` (or a `venv` — see
    [Environment Setup](#environment-setup)).
-2. `pip install -r requirements.txt`, then get a free key at
-   [console.groq.com](https://console.groq.com) and put it in a `.env` file in the root directory:
+2. [Install Ollama](https://ollama.com/download), then pull the default model:
 
-    ```env
-    GROQ_API_KEY=your_api_key_here
+    ```bash
+    ollama pull qwen2.5:14b
     ```
 
-3. Run the backend against the in-memory store, then the frontend in another terminal:
+3. `pip install -r requirements.txt`.
+4. Run the backend against the in-memory store, then the frontend in another terminal:
 
     ```bash
     # Backend
@@ -68,7 +69,7 @@ Postgres/RAG setup.
 
 ### 1. Prerequisites
 
-Ensure you have [Conda](https://docs.conda.io/en/latest/) installed (Anaconda or Miniconda), or use a standard Python 3.11+ virtual environment.
+Ensure you have [Conda](https://docs.conda.io/en/latest/) installed (Anaconda or Miniconda), or use a standard Python 3.11+ virtual environment. Also install [Ollama](https://ollama.com/download) and pull the default model: `ollama pull qwen2.5:14b`.
 
 ### 2. Create and Activate Virtual Environment
 
@@ -99,11 +100,13 @@ pip install -r requirements.txt
 
 ### 4. Environment Configuration
 
-1.  Create a `.env` file in the root directory.
-2.  Add your Groq and LangSmith API keys (required for the LLMs and tracing):
+No API key is required — the LLM runs locally via Ollama (`http://localhost:11434` by default,
+model `qwen2.5:14b`). Optionally create a `.env` file to override either, or to add a LangSmith key
+for tracing:
 
 ```env
-GROQ_API_KEY=your_api_key_here
+MINDMORPH_OLLAMA_MODEL=qwen2.5:14b
+MINDMORPH_OLLAMA_HOST=http://localhost:11434
 ```
 
 ## Running the App

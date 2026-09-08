@@ -40,7 +40,7 @@ class ScoutAgent:
             tags=["scout", " specialized query generation", "agent"]
         )
 
-        self.structured_llm = self.llm.with_structured_output(ScoutOutputSchema)
+        self.structured_llm = self.llm.with_structured_output(ScoutOutputSchema, method="json_schema")
 
     
     def generate_specialized_queries(self, user_query:str):

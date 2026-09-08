@@ -71,6 +71,7 @@ function Dashboard({ userId, onSignOut }: { userId: string; onSignOut: () => voi
   const [creating, setCreating] = useState(false);
   const [stageLabel, setStageLabel] = useState<string | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [createNotice, setCreateNotice] = useState<string | null>(null);
 
   const sessions = useQuery({
     queryKey: ["sessions", userId],
@@ -81,6 +82,7 @@ function Dashboard({ userId, onSignOut }: { userId: string; onSignOut: () => voi
     if (!query.trim() || creating) return;
     setCreating(true);
     setCreateError(null);
+    setCreateNotice(null);
     setStageLabel(null);
     try {
       await api.startSessionStream(userId, query, "B", {
@@ -89,7 +91,15 @@ function Dashboard({ userId, onSignOut }: { userId: string; onSignOut: () => voi
           setCreating(false);
           setStageLabel(null);
           qc.invalidateQueries({ queryKey: ["sessions", userId] });
-          if (res.session_id) router.push(`/session/${res.session_id}`);
+          if (res.session_id) {
+            router.push(`/session/${res.session_id}`);
+          } else {
+            // Non-SCOUT routes (CONTENT/EXERCISE) answer the query directly instead of building a
+            // learning path — no session_id, nothing to navigate to. Say so instead of going silent.
+            setCreateNotice(
+              "That read as a single question rather than a learning path, so it was answered directly instead of a path. Try phrasing it as a roadmap request — e.g. \"create a learning path for …\" — to get a skill graph.",
+            );
+          }
         },
         onError: (msg) => {
           setCreating(false);
@@ -143,6 +153,12 @@ function Dashboard({ userId, onSignOut }: { userId: string; onSignOut: () => voi
           <p className="mt-3 text-sm" style={{ color: "var(--color-review)" }}>
             {createError}
           </p>
+        )}
+        {createNotice && (
+          <div className="mt-3">
+            <p className="eyebrow mb-1">Answered directly</p>
+            <p className="text-sm text-text-muted">{createNotice}</p>
+          </div>
         )}
         {creating && (
           <p className="mt-3 flex items-center gap-2 text-sm text-text-muted">

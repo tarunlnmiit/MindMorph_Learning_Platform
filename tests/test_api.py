@@ -141,7 +141,7 @@ def test_create_session_stream_surfaces_mid_stream_failure_as_error_frame(client
 
     async def fake_astream_session(query, fmt):
         yield {"stage": "scout", "label": "Scout planning specialist queries"}
-        raise RuntimeError("groq 500: internal boom")
+        raise RuntimeError("llm provider 500: internal boom")
 
     monkeypatch.setattr(routes, "astream_session", fake_astream_session)
 
@@ -186,12 +186,12 @@ def test_locked_lesson_returns_409(client):
 
 
 def test_lesson_generation_failure_returns_503_not_500(client, monkeypatch):
-    # An LLM/generation failure (e.g. Groq TPM rate limit) must surface as a graceful 503 with a safe
+    # An LLM/generation failure (e.g. a provider rate limit) must surface as a graceful 503 with a safe
     # message, never a raw 500 that leaks internals.
     sid = client.post("/sessions", json={"user_id": "u1", "query": "p"}).json()["session_id"]
 
     def boom(ls, node_id):
-        raise RuntimeError("groq 413 rate_limit_exceeded: super secret internals")
+        raise RuntimeError("llm provider 413 rate_limit_exceeded: super secret internals")
 
     monkeypatch.setattr(routes, "open_lesson", boom)
     r = client.post(f"/sessions/u1/{sid}/lessons/a")
