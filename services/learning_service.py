@@ -364,7 +364,14 @@ def adapt_after_grade(ls: dict, node_id: str) -> list[str]:
 
     from graph.skill_graph_adapt import apply_adaptation
 
-    new_graph, new_ids = apply_adaptation(ls["skill_graph"], adaptation)
+    # Only the remediation (sub-40 / needs_review) path gets a synthesized inbound edge: those new
+    # nodes are meant to be prerequisites of node_id, and completion.py's deterministic lock (see
+    # _remediation_locked) holds the node until they exist AND are complete — an LLM that omits the
+    # inbound edge (or only chains remedial nodes to each other) would otherwise dead-end the learner.
+    # The mastered/unlock path adds edges OUT of node_id to downstream skills, not prerequisites of it,
+    # so it must not be forced to point back into node_id.
+    graded_node_id = node_id if state.get("status") == "needs_review" else None
+    new_graph, new_ids = apply_adaptation(ls["skill_graph"], adaptation, graded_node_id=graded_node_id)
     ls["skill_graph"] = new_graph
     for nid in new_ids:
         ls["node_state"].setdefault(nid, default_node_state())

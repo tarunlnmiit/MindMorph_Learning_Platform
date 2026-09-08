@@ -180,6 +180,44 @@ def test_grade_sub40_adds_remedial_prereq_and_locks(monkeypatch):
     assert "a" not in ls["lessons"]                  # cached lesson invalidated for regeneration
 
 
+def test_grade_sub40_orphaned_remedial_chain_is_still_completable(monkeypatch):
+    """The live qwen2.5:7b regression: the LLM chains remedial nodes only to EACH OTHER
+    (setup_environment -> verify_setup) with NO edge into the graded node. Without the deterministic
+    synthesis in graph/skill_graph_adapt.py this leaves the graded node locked forever (prereqs_by_node
+    is empty, so `satisfied` in services/completion.py:_remediation_locked can never become True). This
+    test proves the dead end is closed: the graded node gets a real prerequisite path, and completing
+    the remedial nodes actually unlocks it."""
+    from agents.adaptation.adaptation_schema import GraphAdaptation
+    from agents.consensus.skill_graph_schema import SkillEdge, SkillNode
+    from services.completion import locked_node_ids
+
+    orphaned_chain = GraphAdaptation(
+        new_nodes=[
+            SkillNode(id="setup_environment", label="Setup Env", description="x", level="foundational"),
+            SkillNode(id="verify_setup", label="Verify Setup", description="x", level="foundational"),
+        ],
+        new_edges=[SkillEdge(source="setup_environment", target="verify_setup", relation="prerequisite")],
+        remediation_focus=["environment setup"],
+        rationale="break it down",
+    )
+    monkeypatch.setattr(svc, "_get_adaptation_agent", lambda: _FakeAgent(result=orphaned_chain))
+    ls = _opened(monkeypatch, 20)
+    svc.grade(ls, "a", "sol")
+
+    # Both remedial nodes landed, but the graph as proposed still doesn't reach the graded node — the
+    # synthesis must have added the missing edge from the end of the chain.
+    assert {"setup_environment", "verify_setup"} <= set(ls["node_state"])
+    edges = ls["skill_graph"]["edges"]
+    assert any(e["source"] == "verify_setup" and e["target"] == "a" for e in edges)
+    assert "a" in locked_node_ids(ls["skill_graph"], ls["node_state"])  # still locked: prereqs incomplete
+
+    # Complete the remedial chain -> the graded node must unlock (the dead end is gone).
+    for nid in ("setup_environment", "verify_setup"):
+        ls["node_state"][nid]["status"] = "mastered"
+        ls["node_state"][nid]["best_score"] = 100
+    assert "a" not in locked_node_ids(ls["skill_graph"], ls["node_state"])
+
+
 def test_cached_lesson_and_usage_survive_persist_reload(monkeypatch):
     """The cache + cost accounting live in the JSONB session blob, so a save→reload round-trip (the
     real cross-restart durability path) must return both intact. json.dumps in the repo also proves
