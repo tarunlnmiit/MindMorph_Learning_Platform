@@ -45,9 +45,12 @@ below set up the environment; skip ahead if you already have one.)
 
 1. `conda create -n mindmorph python=3.11 -y && conda activate mindmorph` (or a `venv` — see
    [Environment Setup](#environment-setup)).
-2. [Install Ollama](https://ollama.com/download), then pull the default model:
+2. [Install Ollama](https://ollama.com/download), then pull both tier models — a fast model for
+   interactive beats (lesson generation, grading, tutor chat, routing) and a larger model for
+   reasoning-heavy, once-per-session work (skill-graph consensus, review, scout planning):
 
     ```bash
+    ollama pull qwen2.5:7b
     ollama pull qwen2.5:14b
     ```
 
@@ -69,7 +72,7 @@ Postgres/RAG setup.
 
 ### 1. Prerequisites
 
-Ensure you have [Conda](https://docs.conda.io/en/latest/) installed (Anaconda or Miniconda), or use a standard Python 3.11+ virtual environment. Also install [Ollama](https://ollama.com/download) and pull the default model: `ollama pull qwen2.5:14b`.
+Ensure you have [Conda](https://docs.conda.io/en/latest/) installed (Anaconda or Miniconda), or use a standard Python 3.11+ virtual environment. Also install [Ollama](https://ollama.com/download) and pull both tier models: `ollama pull qwen2.5:7b` (default/fast tier) and `ollama pull qwen2.5:14b` (complex/quality tier).
 
 ### 2. Create and Activate Virtual Environment
 
@@ -100,12 +103,15 @@ pip install -r requirements.txt
 
 ### 4. Environment Configuration
 
-No API key is required — the LLM runs locally via Ollama (`http://localhost:11434` by default,
-model `qwen2.5:14b`). Optionally create a `.env` file to override either, or to add a LangSmith key
-for tracing:
+No API key is required — the LLM runs locally via Ollama (`http://localhost:11434` by default), tiered
+across two models: `qwen2.5:7b` for the default/fast tier (interactive beats — lesson generation,
+grading, tutor chat, orchestrator routing) and `qwen2.5:14b` for the complex/quality tier
+(reasoning-heavy, once-per-session work — skill-graph consensus, review, scout planning). Optionally
+create a `.env` file to override either model, the host, or to add a LangSmith key for tracing:
 
 ```env
-MINDMORPH_OLLAMA_MODEL=qwen2.5:14b
+MINDMORPH_OLLAMA_MODEL=qwen2.5:7b
+MINDMORPH_OLLAMA_MODEL_COMPLEX=qwen2.5:14b
 MINDMORPH_OLLAMA_HOST=http://localhost:11434
 ```
 

@@ -18,12 +18,14 @@ from langchain_core.outputs import LLMResult
 logger = logging.getLogger(__name__)
 
 # (input $/1M, output $/1M). Verify/update against current vendor pricing.
-# The only backend is local Ollama (config.OLLAMA_MODEL) — self-hosted inference has no metered API
-# cost, so it honestly prices at 0.0. This is a real price, not an "unknown model" placeholder: the
-# meter still counts tokens and calls (see TokenMeter) so throughput/usage stays observable even
-# though $/user is now $0.
+# The only backend is local Ollama, tiered across two models (config.OLLAMA_MODEL default tier,
+# config.OLLAMA_MODEL_COMPLEX complex tier) — self-hosted inference has no metered API cost, so both
+# honestly price at 0.0. This is a real price, not an "unknown model" placeholder: the meter still
+# counts tokens and calls (see TokenMeter) so throughput/usage stays observable even though $/user is
+# now $0.
 MODEL_PRICES: dict[str, tuple[float, float]] = {
     "qwen2.5:14b": (0.0, 0.0),
+    "qwen2.5:7b": (0.0, 0.0),
 }
 
 _UNKNOWN_MODEL = "unknown"

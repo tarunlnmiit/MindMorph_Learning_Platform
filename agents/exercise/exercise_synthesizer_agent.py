@@ -41,7 +41,7 @@ class ExerciseSynthesizerAgent:
     """Personalizes gathered material into a single practice exercise statement."""
 
     def __init__(self, push_to_langsmith: bool = False):
-        self.llm = get_chat_model("complex")  # the call that hit the Groq 413 → Sonnet on fallback
+        self.llm = get_chat_model("default")  # interactive exercise-generation path
         system_template = SystemMessagePromptTemplate.from_template(EXERCISE_SYNTHESIZER_SYSTEM_PROMPT)
         human_template = HumanMessagePromptTemplate.from_template(_HUMAN_TEMPLATE)
         self.chat_prompt = ChatPromptTemplate.from_messages([system_template, human_template])

@@ -38,7 +38,7 @@ class ConsensusAgent:
     '''Synthesizes specialist findings into a structured Skill Dependency Graph.'''
 
     def __init__(self, push_to_langsmith: bool = False):
-        self.llm = get_chat_model("complex")  # reasoning-heavy → Sonnet on fallback
+        self.llm = get_chat_model("complex")  # builds the skill graph once per session
         self.structured_llm = self.llm.with_structured_output(SkillGraph, method="json_schema")
         system_template = SystemMessagePromptTemplate.from_template(CONSENSUS_SYSTEM_PROMPT)
         human_template = HumanMessagePromptTemplate.from_template(_HUMAN_TEMPLATE)

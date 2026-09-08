@@ -32,7 +32,12 @@ def timed(label, fn):
 
 
 def main():
-    print(f"Model path: config.llm -> qwen2.5:14b via ChatOllama (json_schema structured output)")
+    import config
+    print(
+        f"Model path: Orchestrator uses default tier ({config.OLLAMA_MODEL}); "
+        f"Consensus uses complex tier ({config.OLLAMA_MODEL_COMPLEX}) — both via ChatOllama "
+        f"(json_schema structured output)"
+    )
 
     orch = OrchestratorAgent(push_to_langsmith=False)
     orch_result, orch_t, orch_err = timed(

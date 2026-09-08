@@ -4,11 +4,19 @@ from langchain_ollama import ChatOllama
 
 load_dotenv()
 
-# Local-only LLM: Ollama running qwen2.5:14b by default. No hosted vendor, no API key, no cross-vendor
-# fallback — Groq (deprecated its Llama models out from under this project) and the Claude-CLI fallback
-# were both ripped out. Constructing ChatOllama here doesn't touch the network (it connects lazily on
-# first `.invoke()`), so importing this module stays offline/hermetic even with no daemon running.
-OLLAMA_MODEL = os.getenv("MINDMORPH_OLLAMA_MODEL", "qwen2.5:14b")
+# Local-only LLM: Ollama, tiered across two local models. No hosted vendor, no API key, no
+# cross-vendor fallback — Groq (deprecated its Llama models out from under this project) and the
+# Claude-CLI fallback were both ripped out. Constructing ChatOllama here doesn't touch the network
+# (it connects lazily on first `.invoke()`), so importing this module stays offline/hermetic even
+# with no daemon running.
+#
+# Two tiers, same model family (qwen2.5) so structured-output/schema-adherence behaviour carries
+# over between them:
+#   "default" -> a small, fast model for interactive beats (lesson gen, grading, tutor chat, routing)
+#   "complex" -> the larger model for reasoning-heavy, once-per-session work (skill-graph consensus,
+#                review, scout query planning)
+OLLAMA_MODEL = os.getenv("MINDMORPH_OLLAMA_MODEL", "qwen2.5:7b")
+OLLAMA_MODEL_COMPLEX = os.getenv("MINDMORPH_OLLAMA_MODEL_COMPLEX", "qwen2.5:14b")
 OLLAMA_HOST = os.getenv("MINDMORPH_OLLAMA_HOST", os.getenv("OLLAMA_HOST", "http://localhost:11434"))
 temperature_setting = 0.1
 
@@ -16,14 +24,19 @@ temperature_setting = 0.1
 # in _build_model reads the same as before.
 VALID_PROVIDERS = ("ollama",)
 
+TIER_MODELS = {
+    "default": OLLAMA_MODEL,
+    "complex": OLLAMA_MODEL_COMPLEX,
+}
+
 
 def _build_model(name: str, tier: str) -> ChatOllama:
-    """Construct the chat model for a complexity tier. ``tier`` is accepted but unused: with a single
-    local model there's nothing to route between (see get_chat_model's docstring)."""
+    """Construct the chat model for a complexity tier."""
     name = name.lower()
     if name != "ollama":
         raise ValueError(f"Unknown LLM provider {name!r}; valid: {', '.join(VALID_PROVIDERS)}")
-    return ChatOllama(model=OLLAMA_MODEL, base_url=OLLAMA_HOST, temperature=temperature_setting)
+    model_name = TIER_MODELS.get(tier, OLLAMA_MODEL)
+    return ChatOllama(model=model_name, base_url=OLLAMA_HOST, temperature=temperature_setting)
 
 
 def get_chat_model(tier: str = "default", provider: str | None = None, fallback: str | None = None):
@@ -32,10 +45,8 @@ def get_chat_model(tier: str = "default", provider: str | None = None, fallback:
     Signature kept stable — every agent module calls this — even though there is now exactly one
     provider (local Ollama) and no cross-vendor fallback:
 
-    - ``tier`` used to pick Haiku vs Sonnet on the (now-deleted) Claude-CLI fallback side. It's a
-      no-op today: "default" and "complex" both resolve to ``OLLAMA_MODEL``. Left in the signature so
-      a future tier can map to a different local model (e.g. a bigger one for "complex") without
-      touching every call site.
+    - ``tier`` selects the local model: "default" -> ``OLLAMA_MODEL`` (fast), "complex" ->
+      ``OLLAMA_MODEL_COMPLEX`` (quality). An unrecognized tier falls back to ``OLLAMA_MODEL``.
     - ``provider`` must be ``"ollama"`` (or unset) — anything else raises, same as before.
     - ``fallback`` is accepted for call-site compatibility but ignored: there is no second vendor to
       fall back to. Passing a value is not an error; it just has no effect.
