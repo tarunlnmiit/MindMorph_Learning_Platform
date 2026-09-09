@@ -1,10 +1,11 @@
 import dagre from "@dagrejs/dagre";
 import type { SkillEdge, SkillNode } from "./types";
 
-// The rendered skill card (SkillFlowNode): Tailwind w-48 = 192px; height is roughly two text rows
-// plus padding. Dagre needs the node box to reserve space and avoid overlap.
-const NODE_WIDTH = 192;
-const NODE_HEIGHT = 72;
+// The rendered skill card (SkillFlowNode): Tailwind w-64 = 256px; the label wraps to at most two
+// lines (line-clamp-2) above the status row, so the tallest card is ~85px. Dagre needs the node box
+// to reserve space and avoid overlap — keep these in sync with the card's classes or nodes collide.
+const NODE_WIDTH = 256;
+const NODE_HEIGHT = 88;
 
 // Spacing tuned to the prior 280px column / 120px row feel of the hand-rolled layout.
 const RANK_SEP = 110; // gap between prereq depth layers (horizontal, LR)

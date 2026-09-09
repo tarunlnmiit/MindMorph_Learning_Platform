@@ -40,7 +40,7 @@ function SkillFlowNode({ data }: NodeProps<Node<SkillNodeData>>) {
   const style = STATUS_STYLE[data.status];
   return (
     <div
-      className={`surface relative w-48 px-4 py-3 ${data.isNew ? "skill-node-enter" : ""}`}
+      className={`surface relative w-64 px-4 py-3 ${data.isNew ? "skill-node-enter" : ""}`}
       style={{
         opacity: data.locked ? 0.45 : 1,
         borderColor: data.selected ? "var(--color-gold)" : undefined,
@@ -59,12 +59,18 @@ function SkillFlowNode({ data }: NodeProps<Node<SkillNodeData>>) {
       <div className="flex items-center gap-2">
         <span
           aria-hidden
-          className="grid h-5 w-5 place-items-center rounded-full text-[11px]"
+          className="grid h-5 w-5 shrink-0 place-items-center rounded-full text-[11px]"
           style={{ background: `${style.color}22`, color: style.color }}
         >
           {style.glyph}
         </span>
-        <span className="truncate text-sm font-medium text-text-strong">{data.label}</span>
+        {/* No `truncate`: overflow is measured in pre-transform CSS pixels, so an ellipsis added at
+            zoom 1 stays ellipsised however far the camera zooms in. Real skill names ("Advanced List
+            Comprehensions") need two lines at this width; clamp at two so the card height stays the
+            fixed box graphLayout reserves in dagre. */}
+        <span className="line-clamp-2 text-sm font-medium leading-snug text-text-strong">
+          {data.label}
+        </span>
       </div>
       <p className="mt-1 text-[11px]" style={{ color: style.color }}>
         {style.label}
@@ -167,10 +173,17 @@ export function SkillGraph({
 
     const instance = rfInstanceRef.current;
     if (!instance) return;
+    // Two hops of neighbours, not one: one hop framed as few as three cards, which the maxZoom cap
+    // then centred in empty canvas — the rewire read as "three cards" rather than "the map changed".
+    // Each round works off a snapshot so a node added this round doesn't expand again within it.
+    const edges = session.skill_graph.edges ?? [];
     const focusIds = new Set(focusNodeIds);
-    for (const e of session.skill_graph.edges ?? []) {
-      if (focusIds.has(e.source)) focusIds.add(e.target);
-      if (focusIds.has(e.target)) focusIds.add(e.source);
+    for (let hop = 0; hop < 2; hop++) {
+      const frontier = new Set(focusIds);
+      for (const e of edges) {
+        if (frontier.has(e.source)) focusIds.add(e.target);
+        if (frontier.has(e.target)) focusIds.add(e.source);
+      }
     }
     const run = () =>
       instance.fitView({
