@@ -34,6 +34,7 @@ from agents.reviewer.reviewer_agent import ReviewerAgent
 from tools.github_mcp_client import MCPClientInitialization
 from graph.content_graph import build_content_graph
 from graph.exercise_graph import build_exercise_graph
+from graph.skill_graph_adapt import prune_dangling_edges
 from graph.skill_graph_render import skill_graph_to_mermaid
 from services.timing import span
 
@@ -236,9 +237,21 @@ def build_graph(
             )
         if not sg:
             return {"skill_graph": None, "skill_graph_mermaid": ""}
+        # Deterministic coherence repair, same invariant apply_adaptation enforces on adaptations:
+        # an edge to a node id the model never emitted becomes an unmasterable prerequisite in
+        # services/completion.py, permanently locking its dependants and making is_session_complete
+        # unreachable. Drop it here — BEFORE the mermaid render and before the Reviewer — so the
+        # persisted graph, the diagram and the review all see the same coherent artifact.
+        graph_dict, dropped = prune_dangling_edges(sg)
+        if dropped:
+            logger.warning(
+                "Consensus graph incoherent for %r: dropped %d edge(s) referencing unknown node ids: %s",
+                state["user_query"], len(dropped),
+                [(e.get("source"), e.get("target")) for e in dropped],
+            )
         return {
-            "skill_graph": sg.model_dump(),
-            "skill_graph_mermaid": skill_graph_to_mermaid(sg),
+            "skill_graph": graph_dict,
+            "skill_graph_mermaid": skill_graph_to_mermaid(graph_dict),
         }
 
     def reviewer_node(state: LearningPlanState) -> dict:
@@ -248,7 +261,18 @@ def build_graph(
         with span("graph.reviewer"):
             res = reviewer.review_skill_graph(state["user_query"], json.dumps(sg))
         if not res:
+            logger.warning("Reviewer failed to evaluate the skill graph for %r", state["user_query"])
             return {"review_passed": False, "review_notes": "Reviewer failed to evaluate the skill graph."}
+        if not res.passed:
+            # The verdict rides along in the payload but no consumer acts on it, so a failed review
+            # was previously indistinguishable from a passing one in the logs. Say it out loud. The
+            # one failure mode we can repair deterministically (dangling edges) is already fixed in
+            # consensus_node above, before the Reviewer sees the graph — this covers everything else,
+            # which needs a human, not an automatic Consensus retry.
+            logger.warning(
+                "Reviewer REJECTED the skill graph for %r (serving it anyway): %s",
+                state["user_query"], res.notes,
+            )
         return {"review_passed": res.passed, "review_notes": res.notes}
 
     async def content_node(state: LearningPlanState) -> dict:

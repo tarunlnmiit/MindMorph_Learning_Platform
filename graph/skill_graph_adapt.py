@@ -147,3 +147,30 @@ def apply_adaptation(
 
     new_graph = {**graph, "nodes": merged_nodes, "edges": merged_edges}
     return new_graph, new_node_ids
+
+
+def prune_dangling_edges(skill_graph: Any) -> Tuple[dict, List[dict]]:
+    """Drop edges whose source or target is not in the node list. Returns (new_graph, dropped_edges).
+
+    Same invariant ``apply_adaptation`` already enforces on adaptations, hoisted so the INITIAL
+    Consensus graph gets it too: a hallucinated endpoint (e.g. an edge from ``mlops_tools`` when no
+    such node exists) lands in ``services/completion.py:prereqs_by_node`` as a prerequisite that can
+    never be mastered, permanently locking its dependants and making ``is_session_complete``
+    unreachable. Dropping is deterministic and cannot make the graph worse: a bad TARGET is already
+    ignored by ``prereqs_by_node`` (no-op beyond cleaning the render), and a bad SOURCE is only ever
+    an unsatisfiable gate. A node left with zero prerequisites is correctly available.
+
+    Immutable: the input graph is never mutated. The caller logs the drops (it has query context).
+    """
+    graph = _as_dict(skill_graph)
+    node_ids = {n.get("id") for n in (graph.get("nodes") or [])}
+
+    kept: List[dict] = []
+    dropped: List[dict] = []
+    for e in graph.get("edges") or []:
+        edge = _as_dict(e)
+        (kept if edge.get("source") in node_ids and edge.get("target") in node_ids else dropped).append(edge)
+
+    if not dropped:
+        return graph, []
+    return {**graph, "edges": kept}, dropped
