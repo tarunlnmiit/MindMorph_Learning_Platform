@@ -388,13 +388,16 @@ def adapt_after_grade(ls: dict, node_id: str) -> list[str]:
     return new_ids
 
 
-def grade(ls: dict, node_id: str, solution: str) -> tuple[dict, list[str]]:
+def grade(ls: dict, node_id: str, solution: str) -> tuple[dict, list[str], dict | None]:
     """Grade a node's exercise submission, capture mastery, and run adaptation.
 
     Pulls the format + grading artifact from the cached lesson, so the caller passes only the raw
-    solution string. Mutates and returns ``(ls, new_node_ids)`` (caller persists the whole session
-    afterward); ``new_node_ids`` are any remedial/unlock nodes adaptation just added (empty otherwise),
-    so callers can surface the rewire to the client instead of it looking like a silent snap.
+    solution string. Mutates and returns ``(ls, new_node_ids, result)`` (caller persists the whole
+    session afterward); ``new_node_ids`` are any remedial/unlock nodes adaptation just added (empty
+    otherwise), so callers can surface the rewire to the client instead of it looking like a silent
+    snap. ``result`` is this submission's grade dict — returned separately because ``adapt_after_grade``
+    clears ``node_state[node_id].last_feedback`` on the remediation path (the regenerated lesson gets a
+    different exercise), which would otherwise leave the client with no score to show the learner.
     """
     lesson = ls["lessons"].get(node_id)
     if not lesson:
@@ -427,7 +430,7 @@ def grade(ls: dict, node_id: str, solution: str) -> tuple[dict, list[str]]:
             ls["skill_graph"], ls["node_state"]
         ):
             record_event(ls, STAGES.PATH_COMPLETED)
-    return ls, new_node_ids
+    return ls, new_node_ids, result
 
 
 def grade_assessment(ls: dict, answers: list[int]) -> dict:

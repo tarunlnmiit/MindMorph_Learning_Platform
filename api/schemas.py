@@ -68,3 +68,7 @@ class SessionResponse(BaseModel):
     # except the grade call that triggered it) — lets the client animate the rewire instead of it
     # looking like a silent snap to a new layout.
     new_node_ids: list[str] = Field(default_factory=list)
+    # This submission's grade dict (grade responses only). Sent separately from
+    # node_state.last_feedback because adaptation clears that field on the remediation path, and the
+    # learner still has to be able to read the score and feedback that failed them.
+    grade_result: Optional[dict[str, Any]] = None

@@ -219,8 +219,9 @@ def grade_node(user_id: str, session_id: str, node_id: str, req: GradeRequest) -
     repo = get_default_repository()
     ls = _load_or_404(repo, user_id, session_id)
     new_node_ids: list[str] = []
+    result: dict | None = None
     try:
-        ls, new_node_ids = grade(ls, node_id, req.solution)
+        ls, new_node_ids, result = grade(ls, node_id, req.solution)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -229,7 +230,12 @@ def grade_node(user_id: str, session_id: str, node_id: str, req: GradeRequest) -
         repo.save(user_id, session_id, ls)
         raise _service_unavailable("grade", e)
     repo.save(user_id, session_id, ls)
-    return SessionResponse(session_id=session_id, learning_session=ls, new_node_ids=new_node_ids)
+    return SessionResponse(
+        session_id=session_id,
+        learning_session=ls,
+        new_node_ids=new_node_ids,
+        grade_result=result,
+    )
 
 
 @router.post("/sessions/{user_id}/{session_id}/lessons/{node_id}/flag", response_model=SessionResponse)

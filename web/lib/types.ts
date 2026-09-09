@@ -131,6 +131,10 @@ export interface SessionResponse {
   // Ids of any remedial/unlock nodes an adaptation just added (only non-empty on the grade response
   // that triggered it). Optional: only SessionResponse carries it, and older cached payloads won't.
   new_node_ids?: string[];
+  // This submission's grade result (grade responses only). Carried separately from
+  // node_state.last_feedback, which the backend clears when a failing grade queues a regenerated
+  // lesson — without this the learner would never see the score that failed them.
+  grade_result?: GradeResult | null;
 }
 
 export interface IngestResponse {

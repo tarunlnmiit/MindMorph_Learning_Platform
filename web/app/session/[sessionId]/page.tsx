@@ -4,12 +4,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
 import { AssessmentQuiz } from "@/components/AssessmentQuiz";
+import { GradeResult } from "@/components/GradeResult";
 import { LessonPanel } from "@/components/LessonPanel";
 import { SkillGraph } from "@/components/SkillGraph";
 import { TutorChat } from "@/components/TutorChat";
 import { LockedError, api } from "@/lib/api";
 import { completeNodeIds, incompletePrereqLabels } from "@/lib/status";
-import type { SessionResponse } from "@/lib/types";
+import type { GradeResult as GradeResultT, SessionResponse } from "@/lib/types";
 import { useUser } from "@/lib/useUser";
 
 export default function SessionPage() {
@@ -22,6 +23,12 @@ export default function SessionPage() {
   // Only set when a grade response actually grew the graph — drives the SkillGraph camera cue so an
   // off-screen rewire (learner scrolled down at the editor) doesn't go unnoticed.
   const [rewireFocusIds, setRewireFocusIds] = useState<string[] | undefined>(undefined);
+  // The grade the learner just got, held here rather than inside LessonPanel: a failing grade makes
+  // the backend drop the cached lesson (so the next one targets the gaps), which unmounts the panel
+  // and would take the score with it. Keyed by node so it can never render against another skill.
+  const [gradeOutcome, setGradeOutcome] = useState<
+    { nodeId: string; result: GradeResultT; newNodeCount: number } | null
+  >(null);
 
   const key = ["session", userId, sessionId];
 
@@ -40,6 +47,8 @@ export default function SessionPage() {
     onSuccess: (res) => {
       writeBack(res);
       setErrorMsg(null);
+      // A freshly opened lesson carries a different exercise, so the previous grade no longer applies.
+      setGradeOutcome(null);
     },
     onError: (e) => {
       if (e instanceof LockedError) setLockMsg(`Locked — first complete: ${e.pending.join(", ")}`);
@@ -50,8 +59,15 @@ export default function SessionPage() {
   const grade = useMutation({
     mutationFn: ({ nodeId, solution }: { nodeId: string; solution: string }) =>
       api.grade(userId!, sessionId, nodeId, solution),
-    onSuccess: (res) => {
+    onSuccess: (res, vars) => {
       writeBack(res);
+      if (res.grade_result) {
+        setGradeOutcome({
+          nodeId: vars.nodeId,
+          result: res.grade_result,
+          newNodeCount: res.new_node_ids?.length ?? 0,
+        });
+      }
       if (res.new_node_ids?.length) setRewireFocusIds(res.new_node_ids);
     },
     onError: (e) => setErrorMsg(e.message),
@@ -173,6 +189,14 @@ export default function SessionPage() {
             onFlag={() => flag.mutate(selected)}
             flagging={flag.isPending}
           />
+        ) : gradeOutcome && gradeOutcome.nodeId === selected ? (
+          // The lesson was dropped by the grade that just came back — keep the result on screen.
+          <GradedOutcome
+            outcome={gradeOutcome}
+            label={session.skill_graph.nodes.find((n) => n.id === gradeOutcome.nodeId)?.label}
+            locked={!!session.node_state[gradeOutcome.nodeId]?.remediation_pending}
+            weaknesses={session.node_state[gradeOutcome.nodeId]?.weaknesses ?? []}
+          />
         ) : (
           <div className="surface flex min-h-[160px] items-center justify-center p-8 text-center text-text-muted">
             Pick a skill on the graph to open its lesson.
@@ -195,6 +219,63 @@ export default function SessionPage() {
         </>
       )}
     </main>
+  );
+}
+
+// Shown in place of the lesson panel when a grade cleared the cached lesson: the score and feedback
+// stay readable, and the learner is told what the graph just did in response.
+function GradedOutcome({
+  outcome,
+  label,
+  locked,
+  weaknesses,
+}: {
+  outcome: { result: GradeResultT; newNodeCount: number };
+  label?: string;
+  locked: boolean;
+  weaknesses: string[];
+}) {
+  return (
+    <article className="surface p-7 md:p-10">
+      <p className="eyebrow mb-4">Graded{label ? ` — ${label}` : ""}</p>
+
+      <GradeResult result={outcome.result} />
+
+      {weaknesses.length > 0 && (
+        <div className="mt-6">
+          <p className="text-sm text-text-muted">Gaps to work on:</p>
+          <ul className="mt-2 list-disc pl-5 text-sm text-text">
+            {weaknesses.map((w) => (
+              <li key={w}>{w}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="mt-6 border-t border-white/5 pt-5 text-sm text-text-muted">
+        {locked ? (
+          <p>
+            This skill is locked until its prerequisites are complete
+            {outcome.newNodeCount > 0
+              ? ` — ${outcome.newNodeCount} new prerequisite ${
+                  outcome.newNodeCount === 1 ? "skill was" : "skills were"
+                } added to the map above.`
+              : "."}{" "}
+            Work through those first; reopening this skill will then give you a new lesson aimed at the
+            gaps.
+          </p>
+        ) : (
+          <p>
+            Reopen this skill on the map above for a new lesson aimed at the gaps.
+            {outcome.newNodeCount > 0
+              ? ` ${outcome.newNodeCount} new ${
+                  outcome.newNodeCount === 1 ? "skill was" : "skills were"
+                } added to the map.`
+              : ""}
+          </p>
+        )}
+      </div>
+    </article>
   );
 }
 

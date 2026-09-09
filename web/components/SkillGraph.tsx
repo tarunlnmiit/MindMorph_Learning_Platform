@@ -172,11 +172,27 @@ export function SkillGraph({
       if (focusIds.has(e.source)) focusIds.add(e.target);
       if (focusIds.has(e.target)) focusIds.add(e.source);
     }
-    instance.fitView({
-      nodes: [...focusIds].map((id) => ({ id })),
-      padding: 0.3,
-      duration: reduceMotion ? 0 : 600,
-    });
+    const run = () =>
+      instance.fitView({
+        nodes: [...focusIds].map((id) => ({ id })),
+        // maxZoom matters as much as padding: without it a two-or-three-node focus set zooms past 1.8
+        // and clips the very node the new ones attach to, so the rewire reads as an unrelated card
+        // instead of a change to the map. Cap it near the mount-time framing and keep enough padding
+        // that the surrounding graph stays visible for context.
+        padding: 0.45,
+        maxZoom: 1.1,
+        duration: reduceMotion ? 0 : 900,
+      });
+
+    if (reduceMotion) {
+      run();
+      return;
+    }
+    // The same commit that triggers this cue unmounts the lesson panel and its Monaco editor. Starting
+    // the camera tween inside that blocked frame eats most of its duration and lands as a snap, so let
+    // the re-render settle first.
+    const timer = window.setTimeout(run, 150);
+    return () => window.clearTimeout(timer);
   }, [focusNodeIds, session.skill_graph.edges]);
 
   return (

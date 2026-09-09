@@ -68,7 +68,7 @@ def client(monkeypatch):
     def fake_grade(ls, node_id, solution):
         ls["node_state"][node_id]["status"] = "mastered"
         ls["node_state"][node_id]["best_score"] = 100
-        return ls, []
+        return ls, [], {"score": 100}
 
     monkeypatch.setattr(routes, "open_lesson", fake_open)
     monkeypatch.setattr(routes, "grade", fake_grade)
