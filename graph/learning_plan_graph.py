@@ -88,18 +88,30 @@ async def _run_market(market_agent: Any, query: str, location: str = "United Sta
     The Scout MARKET query is a natural-language question; the job actor needs a concise
     role title, so we distill one before searching.
     """
+    # Sub-spans: `graph.market` dominates the build, and the five sub-stages have very
+    # different costs (two Apify round-trips, two LLM calls). Each is timed separately —
+    # a single span around the gather below would report max(), not both legs.
+    async def _init():
+        with span("market.apify.initialize"):
+            return await market_agent.scraper.initialize()
+
+    async def _title():
+        with span("market.llm.title"):
+            return await market_agent.extract_job_title(query)
+
     try:
         # Independent: the MCP handshake doesn't need the title, the title doesn't need the client.
-        _, job_title = await asyncio.gather(
-            market_agent.scraper.initialize(), market_agent.extract_job_title(query)
-        )
-        dataset_id = await market_agent.scraper.search_jobs(job_title, location)
+        _, job_title = await asyncio.gather(_init(), _title())
+        with span("market.apify.search"):
+            dataset_id = await market_agent.scraper.search_jobs(job_title, location)
         if not dataset_id:
             return None
-        jobs = await market_agent.scraper.fetch_job_results(dataset_id)
+        with span("market.apify.fetch"):
+            jobs = await market_agent.scraper.fetch_job_results(dataset_id)
         if not jobs:
             return None
-        summary = await market_agent.summarize_job(jobs[0])
+        with span("market.llm.summary"):
+            summary = await market_agent.summarize_job(jobs[0])
         return {"job": jobs[0], "summary": summary}
     except Exception:
         logger.exception("Market node error")
@@ -207,6 +219,14 @@ def build_graph(
     def consensus_node(state: LearningPlanState) -> dict:
         market_data = state.get("market_output")
         market_text = market_data.get("summary") if market_data else None
+        if not market_text:
+            # Consensus silently substitutes "Not available." — same shape as a grounded run.
+            # Say it out loud, otherwise a degraded skill graph is indistinguishable from a good one.
+            logger.warning(
+                "Consensus degraded: no MARKET grounding for %r "
+                "(job scrape returned nothing or timed out) — skill graph built from Academic + Practical only",
+                state["user_query"],
+            )
         with span("graph.consensus"):
             sg = consensus.build_skill_graph(
                 state["user_query"],
