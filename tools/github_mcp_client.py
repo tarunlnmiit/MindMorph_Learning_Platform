@@ -43,6 +43,9 @@ class MCPClientInitialization:
             logger.info("GitHub MCP: client created, fetching available tools...")
 
             tools = await with_mcp_timeout(self.client.get_tools(), what="github get_tools")
+            # Cache: search_github_repositories used to re-fetch this same list (a second ~5s
+            # round-trip per graph build).
+            self.tools = tools
             logger.info("GitHub MCP: initialized with %d tool(s)", len(tools))
 
             # Full tool details only at DEBUG level (verbose).
@@ -52,6 +55,7 @@ class MCPClientInitialization:
         except asyncio.TimeoutError:
             # Timed out before the client is usable — drop it so a later call rebuilds.
             self.client = None
+            self.tools = None
             logger.warning("GitHub MCP: initialize timed out; client discarded")
             raise
         except Exception:
@@ -61,7 +65,7 @@ class MCPClientInitialization:
 
     async def search_github_repositories(self, query):
         try:
-            tools = await with_mcp_timeout(self.client.get_tools(), what="github get_tools")
+            tools = self.tools or await with_mcp_timeout(self.client.get_tools(), what="github get_tools")
             search_tool = next(tool for tool in tools if tool.name == "search_repositories")
             result = await with_mcp_timeout(
                 search_tool.ainvoke({"query": query, "perPage": 5}),
@@ -73,6 +77,7 @@ class MCPClientInitialization:
         except asyncio.TimeoutError:
             # Half-open client — discard so the next call rebuilds cleanly.
             self.client = None
+            self.tools = None
             logger.warning("GitHub MCP: search timed out for %r; client discarded", query)
             return None
         except StopIteration:

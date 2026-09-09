@@ -9,6 +9,7 @@
 # Skill Dependency Graph (JSON), the renderer turns it into Mermaid, and Reviewer checks it.
 # Specialist / content nodes write distinct state keys, so fan-out needs no custom reducer.
 
+import asyncio
 import logging
 import sys
 import os
@@ -87,8 +88,10 @@ async def _run_market(market_agent: Any, query: str, location: str = "United Sta
     role title, so we distill one before searching.
     """
     try:
-        await market_agent.scraper.initialize()
-        job_title = await market_agent.extract_job_title(query)
+        # Independent: the MCP handshake doesn't need the title, the title doesn't need the client.
+        _, job_title = await asyncio.gather(
+            market_agent.scraper.initialize(), market_agent.extract_job_title(query)
+        )
         dataset_id = await market_agent.scraper.search_jobs(job_title, location)
         if not dataset_id:
             return None
@@ -182,7 +185,9 @@ def build_graph(
     async def practical_node(state: LearningPlanState) -> dict:
         query = state.get("scout_queries", {}).get("PRACTICAL") or state["user_query"]
         repos = await _fetch_github_repos(query)
-        resp = practical.provide_practical_advice(query, github_repos=repos)
+        # provide_practical_advice uses the SYNC llm.invoke; calling it directly here would block the
+        # event loop for the whole LLM call and stall the concurrently-running Market node's awaits.
+        resp = await asyncio.to_thread(practical.provide_practical_advice, query, github_repos=repos)
         return {"practical_output": resp.content if resp else None}
 
     def consensus_node(state: LearningPlanState) -> dict:
