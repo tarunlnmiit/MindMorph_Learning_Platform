@@ -19,6 +19,9 @@ export default function SessionPage() {
   const qc = useQueryClient();
   const [lockMsg, setLockMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  // Only set when a grade response actually grew the graph — drives the SkillGraph camera cue so an
+  // off-screen rewire (learner scrolled down at the editor) doesn't go unnoticed.
+  const [rewireFocusIds, setRewireFocusIds] = useState<string[] | undefined>(undefined);
 
   const key = ["session", userId, sessionId];
 
@@ -47,7 +50,10 @@ export default function SessionPage() {
   const grade = useMutation({
     mutationFn: ({ nodeId, solution }: { nodeId: string; solution: string }) =>
       api.grade(userId!, sessionId, nodeId, solution),
-    onSuccess: writeBack,
+    onSuccess: (res) => {
+      writeBack(res);
+      if (res.new_node_ids?.length) setRewireFocusIds(res.new_node_ids);
+    },
     onError: (e) => setErrorMsg(e.message),
   });
 
@@ -125,6 +131,7 @@ export default function SessionPage() {
       <section className="mt-8">
         <SkillGraph
           session={session}
+          focusNodeIds={rewireFocusIds}
           onOpen={(nodeId, locked) => {
             setLockMsg(null);
             setErrorMsg(null);

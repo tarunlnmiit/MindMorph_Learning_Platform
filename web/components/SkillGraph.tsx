@@ -9,6 +9,7 @@ import {
   type NodeProps,
   Position,
   ReactFlow,
+  type ReactFlowInstance,
 } from "@xyflow/react";
 import { useEffect, useMemo, useRef } from "react";
 import { layoutSkillGraph } from "@/lib/graphLayout";
@@ -78,15 +79,22 @@ const nodeTypes = { skill: SkillFlowNode };
 export function SkillGraph({
   session,
   onOpen,
+  focusNodeIds,
 }: {
   session: LearningSession;
   onOpen: (nodeId: string, locked: boolean) => void;
+  // Ids the caller wants the camera drawn to right now (the authoritative signal is the grade
+  // response's `new_node_ids` — a rewire that happened off-screen otherwise goes unnoticed since the
+  // graph sits above the lesson panel the learner is scrolled down to).
+  focusNodeIds?: string[];
 }) {
   // Ids/edge-keys seen on a prior render, so a mid-session remedial node or edge (added by an LLM
   // adaptation after a sub-40 grade) gets its entrance animation exactly once instead of on every
   // recompute.
   const seenNodeIds = useRef<Set<string>>(new Set());
   const seenEdgeKeys = useRef<Set<string>>(new Set());
+  const containerRef = useRef<HTMLDivElement>(null);
+  const rfInstanceRef = useRef<ReactFlowInstance<Node<SkillNodeData>, Edge> | null>(null);
 
   const { nodes, edges } = useMemo(() => {
     const graph = session.skill_graph;
@@ -145,13 +153,43 @@ export function SkillGraph({
     for (const e of edges) seenEdges.add(`${e.source}->${e.target}`);
   }, [nodes, edges]);
 
+  // Camera cue: a grade that grew the graph shouldn't rewire off-screen while the learner is still
+  // scrolled down at the editor. Scroll the graph into view, then frame the new node(s) plus whatever
+  // they attach to, so the rewire reads as a connected change rather than an isolated pop-in.
+  useEffect(() => {
+    if (!focusNodeIds || focusNodeIds.length === 0) return;
+    const container = containerRef.current;
+    if (!container) return;
+
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    // Reduced-motion users still land on the right scroll position — just without the smooth glide.
+    container.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
+
+    const instance = rfInstanceRef.current;
+    if (!instance) return;
+    const focusIds = new Set(focusNodeIds);
+    for (const e of session.skill_graph.edges ?? []) {
+      if (focusIds.has(e.source)) focusIds.add(e.target);
+      if (focusIds.has(e.target)) focusIds.add(e.source);
+    }
+    instance.fitView({
+      nodes: [...focusIds].map((id) => ({ id })),
+      padding: 0.3,
+      duration: reduceMotion ? 0 : 600,
+    });
+  }, [focusNodeIds, session.skill_graph.edges]);
+
   return (
-    <div className="surface h-[560px] overflow-hidden">
+    <div ref={containerRef} className="surface h-[560px] overflow-hidden">
       <ReactFlow
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
         fitView
+        fitViewOptions={{ padding: 0.2, maxZoom: 1.5 }}
+        onInit={(instance) => {
+          rfInstanceRef.current = instance;
+        }}
         proOptions={{ hideAttribution: true }}
         onNodeClick={(_, node) => onOpen(node.id, (node.data as SkillNodeData).locked)}
         nodesDraggable={false}

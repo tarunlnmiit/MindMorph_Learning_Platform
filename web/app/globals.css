@@ -91,9 +91,13 @@ body {
 /* Adaptive skill graph rewire (remedial nodes on a sub-40 grade re-rank the whole dagre layout).
    xyflow applies each node's position as an inline `transform` on this wrapper and never remounts it
    (stable ids), so a single transition here is enough to glide EVERY existing node to its new spot
-   instead of snapping — no tween loop needed. */
+   instead of snapping — no tween loop needed.
+
+   Deliberately NOT `--ease-out-expo` (the app default, used elsewhere): that curve front-loads ~45%
+   of the travel into the first 13ms, so a 300ms position tween reads as an instant jump followed by
+   an imperceptible settle. A longer, gentler curve lets the eye actually track the node moving. */
 .react-flow__node {
-  transition: transform 300ms var(--ease-out-expo);
+  transition: transform 500ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* One-shot entrance for a newly-added remedial/unlock node, applied to the INNER card (never the
