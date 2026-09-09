@@ -4,7 +4,7 @@
 **Scope:** Everything implemented to date — the multi-agent learning prototype, the adaptive
 learning loop, and the individual-agent test harness.
 **Build under test:** `main` branch (latest). UI is the Next.js web app (`web/`) over the FastAPI backend (`api/`).
-**Last updated:** 2026-06-13
+**Last updated:** 2026-09-10
 
 ---
 
@@ -37,12 +37,13 @@ solved, read the on-screen **Grading harness** to see what is required, then use
 | Full Orchestration → **CONTENT** route | Standalone "quick lesson" (dual-path: creative + live web grounding) |
 | Full Orchestration → **EXERCISE** route | Standalone exercise + live grading |
 | **Individual Agent Test** mode | Orchestrator, Scout, Academic, Market, Practical agents in isolation |
-| Cross-cutting | Logging, error handling, re-initialize, secrets validation |
+| Cross-cutting | Logging, error handling, re-initialize, LLM provider selection (keyless Ollama path, Groq key-pool rotation, fallback) |
 | Automated tests | `pytest` suite |
 
 ### Out of scope (not implemented — do **not** raise bugs for these)
 Persistence/accounts (everything is in-memory per browser session), user login/auth, Postgres/Redis,
-RAG/vector search, multi-model routing, Next.js frontend, containerized grading sandbox, visual/diagram
+RAG/vector search, multi-**vendor** model routing (GPT / Claude / Gemini / Bedrock — the two backends
+that do exist, Groq and Ollama, are in scope), Next.js frontend, containerized grading sandbox, visual/diagram
 generator, real dataset ingestion (dataset exercises return links). See `docs/IMPLEMENTATION_STATUS.md`
 for the full roadmap.
 
@@ -53,11 +54,20 @@ for the full roadmap.
 ### 3.1 Prerequisites
 - macOS or Linux, **Anaconda/Miniconda** installed.
 - A **`conda` env named `mindmorph`** (the project's required env).
-- API keys:
-  - **`GROQ_API_KEY`** — **mandatory** (every LLM call). Without it the app fails to start.
+- **[Ollama](https://ollama.com) installed and running** (`http://localhost:11434`) with both tier
+  models pulled — `ollama pull qwen2.5:7b` and `ollama pull qwen2.5:14b`. This is the default backend
+  and the only one that needs no account.
+- API keys — **all optional**; there is no mandatory secret:
+  - `GROQ_API_KEYS` — *optional*, **plural**, comma-separated **pool** of Groq keys. Present ⇒ hosted
+    Groq (`openai/gpt-oss-120b`) runs in front of Ollama and is much faster. Absent/empty ⇒ everything
+    runs on local Ollama; `config.py` raises nothing.
   - `APIFY_API_TOKEN` — *optional*; only the **Market** tab / Market agent needs it. Its absence is
     expected to degrade gracefully (no crash).
   - `GITHUB_TOKEN` — *optional*; improves the Practical agent's GitHub results.
+
+> **Speed expectation:** on the keyless Ollama path inference is slow — a full skill-graph build takes
+> **minutes** on `qwen2.5:14b`. Slowness on Ollama is **not** a bug; only raise a timeout defect when
+> Groq keys are configured. Test Suites B–G on the Groq path if you have keys.
 
 ### 3.2 One-time setup
 ```bash
@@ -65,9 +75,10 @@ for the full roadmap.
 git checkout main && git pull
 conda run -n mindmorph pip install -r requirements.txt   # if env not already provisioned
 ```
-Create a `.env` file in the project root:
+A `.env` file in the project root is **optional** — with no `.env` at all the app runs on Ollama. To
+test the hosted path, create one:
 ```
-GROQ_API_KEY=<key>
+GROQ_API_KEYS=<key1>,<key2>,<key3>   # optional pool; unset/empty = Ollama-only
 APIFY_API_TOKEN=<optional key>
 GITHUB_TOKEN=<optional token>
 ```
@@ -114,9 +125,11 @@ Severity guide: **Critical** (blocks core flow / data loss) · **High** (feature
 
 | ID | Title | Steps | Expected | Sev |
 |---|---|---|---|---|
-| A1 | Launch without key | Unset `GROQ_API_KEY`, launch | App fails fast with a clear `GROQ_API_KEY not found` error (no silent hang) | High |
-| A2 | Launch with key | Set key, launch | App loads; title "🧠 MindMorph Learning Platform", sidebar with **Select Mode** | Critical |
-| A3 | Automated suite | Run `pytest -q` | All tests pass (currently **69 passed**); no errors | High |
+| A1 | Keyless launch runs on Ollama | Remove/empty `GROQ_API_KEYS` (delete `.env` or comment the line), Ollama running, launch, then run one **CONTENT** query (`Explain Python list comprehensions`) end to end | Backend starts with **no** key error; the lesson generates and renders (slowly — minutes is fine). Logs contain **no** `llm:` rotation/fallback lines, and Ollama shows the request (`ollama ps`, or Ollama's own server log). **Any startup failure or "key not found" error is a Critical defect** — the keyless path is a headline feature | Critical |
+| A2 | Launch with keys | Set `GROQ_API_KEYS` to one or more valid keys, launch, run the same CONTENT query | App loads at http://localhost:3000; the lesson generates **noticeably faster** than A1; no `llm:` warnings in the logs | Critical |
+| A5 | Key rotation on a bad key | Set `GROQ_API_KEYS=bad1,bad2,<valid key>` (invalid keys → HTTP 401, a rotate status), launch, run any query | Logs show `llm: key 1/3 failed with HTTP 401 … rotating to next key`, then key 2/3, then the answer returns from key 3. **UI result is normal** — rotation is invisible to the learner. With no valid key in the pool, logs instead show `llm: all N keys exhausted — falling back` and the answer still arrives (from Ollama) | High |
+| A6 | Bad model id fails loudly, once | Set `MINDMORPH_GROQ_MODEL=openai/does-not-exist` with a valid `GROQ_API_KEYS` pool, launch, run any query | Logs show **one** `llm: key 1/N failed permanently with HTTP 404 — NOT rotating, falling back` at **ERROR** level; the other keys are **not** tried. The answer still returns via Ollama (slower). A 404 that rotates through the pool, or degrades with **no** ERROR line, is the defect | High |
+| A3 | Automated suite | Run `pytest -q` | All tests pass (**232 collected** at time of writing); no failures or errors | High |
 | A4 | Re-initialize | Click **🔄 Re-initialize Agents** mid-session | Session resets; any open roadmap/lesson is cleared; no crash | Medium |
 
 ### Suite B — Full Orchestration: SCOUT (skill roadmap)
@@ -207,8 +220,11 @@ Precondition: sidebar **Select Mode** = **Individual Agent Test**.
 
 - **Logging:** terminal + `logs/mindmorph.log` should show structured lines for each stage, e.g.
   `UI: generate requested…`, `Grader: coding result X/Y…`, `UI: adapting graph after grade…`,
-  `Adaptation: +N node(s) +M edge(s)…`, `ContentAgent: generating … (remediation=True)`. No secrets
-  (API keys) should ever appear in logs.
+  `Adaptation: +N node(s) +M edge(s)…`, `ContentAgent: generating … (remediation=True)`. LLM provider
+  events use the `llm:` prefix — `llm: key N/M failed with HTTP 429 … rotating to next key` (WARNING),
+  `llm: all N keys exhausted — falling back` (WARNING), `llm: key N/M failed permanently with HTTP 404
+  — NOT rotating, falling back` (ERROR). No secrets (API keys) should ever appear in logs — key
+  positions are logged as `key 2/3`, never the key value.
 - **Security note (do not "fix" as a bug):** code grading runs the learner's Python in a subprocess
   with a wall-clock timeout and secret-scrubbed env. It is a **hang-guard for a local single-user
   prototype, not a security sandbox** (documented in `tools/code_executor.py`). Real isolation is a
@@ -307,4 +323,5 @@ Notes:        (LLM output is non-deterministic — include the seed query so we 
 | Status glyphs | ✅ complete (node + all prereqs mastered) · 🔒 prereqs pending · ▶ 50–79 · 🔁 < 50 (mastery is sticky) |
 | Routes | SCOUT = roadmap+loop · CONTENT = quick lesson · EXERCISE = standalone exercise |
 | Reset session | sidebar **🔄 Re-initialize Agents** |
-| Required secret | `GROQ_API_KEY` (others optional) |
+| Required secret | **none** — `GROQ_API_KEYS` (pool) speeds things up; unset = local Ollama only |
+| LLM backends | Groq `openai/gpt-oss-120b` (if keys) → local Ollama `qwen2.5:7b` / `:14b` fallback |
