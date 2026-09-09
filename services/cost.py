@@ -88,9 +88,9 @@ class TokenMeter(BaseCallbackHandler):
     """Accumulates token usage + estimated cost across every LLM call in one graph invocation.
 
     Attach via ``graph.ainvoke(state, config={"callbacks": [meter]})``; LangChain propagates it to all
-    nested runnables. A call that reports no usage (e.g. the Claude CLI placeholder) sets ``unknown``
-    so a zero cost is never mistaken for a free real call. A priced $0 (local Ollama) is not
-    ``unknown`` — it is a real price.
+    nested runnables. A call that reports no usage (some responses simply omit ``usage_metadata``)
+    sets ``unknown`` so a zero cost is never mistaken for a free real call. A priced $0 (local
+    Ollama) is not ``unknown`` — it is a real price.
     """
 
     def __init__(self) -> None:

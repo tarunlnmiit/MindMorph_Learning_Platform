@@ -17,10 +17,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.append(ROOT)
 
+from langchain_core.exceptions import OutputParserException
 from langchain_ollama import ChatOllama
 
 import config
-from llm_providers import ProviderChain, _status_code
+from llm_providers import PARSE_RETRIES, ProviderChain, _status_code
 
 
 class _HttpError(Exception):
@@ -32,17 +33,22 @@ class _HttpError(Exception):
 
 
 class _StubModel:
-    """Records its calls; either raises a fixed error or returns a fixed answer."""
+    """Records its calls; either raises a fixed error or returns a fixed answer.
 
-    def __init__(self, name, error=None, answer=None):
+    ``fail_times`` caps how many of the leading calls raise, so a stub can fail once and then
+    succeed — which is what a re-sampled parse failure looks like.
+    """
+
+    def __init__(self, name, error=None, answer=None, fail_times=None):
         self.name = name
         self.error = error
         self.answer = answer if answer is not None else f"answer-from-{name}"
+        self.fail_times = fail_times
         self.calls = 0
 
     def invoke(self, prompt, **kwargs):
         self.calls += 1
-        if self.error is not None:
+        if self.error is not None and (self.fail_times is None or self.calls <= self.fail_times):
             raise self.error
         return self.answer
 
@@ -129,6 +135,64 @@ def test_model_not_found_is_permanent_not_rotated(caplog):
     assert ollama.calls == 1
     assert any(rec.levelno == logging.ERROR for rec in caplog.records), "404 must log loudly at ERROR"
     assert "404" in caplog.text
+
+
+# --- parse failures ----------------------------------------------------------------------------
+# A structured-output parse failure carries no HTTP status, so the status-code rule used to read it
+# as permanent and abandon the whole Groq pool for local Ollama — ~60s of a 92.6s graph build. It is
+# sampling variance: re-sample the SAME key (a different key runs the same model), then fall back.
+
+def test_parse_failure_retries_the_same_key_and_can_succeed(caplog):
+    k1 = _StubModel("key1", error=OutputParserException("bad json"), fail_times=PARSE_RETRIES)
+    k2 = _StubModel("key2")
+    chain = ProviderChain([k1, k2], fallback=_StubModel("ollama"))
+
+    with caplog.at_level(logging.WARNING, logger="llm_providers"):
+        assert chain.invoke("hi") == "answer-from-key1"
+
+    assert k1.calls == PARSE_RETRIES + 1, "the retry must land on the same key"
+    assert k2.calls == 0, "a parse failure must not rotate — another key runs the same model"
+    assert "re-sampling the same key" in caplog.text
+    assert not any(rec.levelno >= logging.ERROR for rec in caplog.records), (
+        "a retried parse failure is not a config error and must not log at ERROR"
+    )
+
+
+def test_parse_failure_that_exhausts_retries_falls_through_to_fallback(caplog):
+    k1 = _StubModel("key1", error=OutputParserException("bad json"))  # fails every time
+    k2 = _StubModel("key2")
+    ollama = _StubModel("ollama")
+    chain = ProviderChain([k1, k2], fallback=ollama)
+
+    with caplog.at_level(logging.WARNING, logger="llm_providers"):
+        assert chain.invoke("hi") == "answer-from-ollama"
+
+    assert k1.calls == PARSE_RETRIES + 1
+    assert k2.calls == 0
+    assert ollama.calls == 1
+    assert "unparseable structured output" in caplog.text
+    assert not any(rec.levelno >= logging.ERROR for rec in caplog.records)
+
+
+def test_parse_failure_retries_on_the_async_path_too():
+    k1 = _StubModel("key1", error=OutputParserException("bad json"), fail_times=PARSE_RETRIES)
+    chain = ProviderChain([k1], fallback=_StubModel("ollama"))
+    assert asyncio.run(chain.ainvoke("hi")) == "answer-from-key1"
+    assert k1.calls == PARSE_RETRIES + 1
+
+
+def test_non_parse_exception_without_status_is_still_permanent():
+    # The retry must NOT widen into "any unknown exception gets a second shot". A plain ValueError
+    # is the sharp case: OutputParserException subclasses it, so this proves the check keys on the
+    # specific class rather than the base.
+    k1 = _StubModel("key1", error=ValueError("something else"))
+    k2 = _StubModel("key2")
+    ollama = _StubModel("ollama")
+    chain = ProviderChain([k1, k2], fallback=ollama)
+
+    assert chain.invoke("hi") == "answer-from-ollama"
+    assert k1.calls == 1, "one shot only — no re-sample for a non-parse failure"
+    assert k2.calls == 0
 
 
 def test_exhausted_with_no_fallback_reraises_last_error():

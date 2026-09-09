@@ -24,3 +24,6 @@ graphify-out/
 docs/archive/ADAPTIVE_LOOP_PLAN.md
 docs/archive/COMMERCIALIZATION.md
 docs/archive/source-pdfs/
+
+# Playwright scratch drivers used for live capture runs
+web/.live_e2e*.mjs

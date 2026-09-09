@@ -209,7 +209,7 @@ export function SkillGraph({
   }, [focusNodeIds, session.skill_graph.edges]);
 
   return (
-    <div ref={containerRef} className="surface h-[560px] overflow-hidden">
+    <div ref={containerRef} className="surface h-[420px] overflow-hidden">
       <ReactFlow
         nodes={nodes}
         edges={edges}
