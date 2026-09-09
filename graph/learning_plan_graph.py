@@ -35,6 +35,7 @@ from tools.github_mcp_client import MCPClientInitialization
 from graph.content_graph import build_content_graph
 from graph.exercise_graph import build_exercise_graph
 from graph.skill_graph_render import skill_graph_to_mermaid
+from services.timing import span
 
 
 class LearningPlanState(TypedDict, total=False):
@@ -164,7 +165,8 @@ def build_graph(
     )
 
     def orchestrator_node(state: LearningPlanState) -> dict:
-        resp = orchestrator.route_query(state["user_query"])
+        with span("graph.orchestrator"):
+            resp = orchestrator.route_query(state["user_query"])
         return {"route": resp.Assigned_Agent, "reasoning": resp.Reasoning}
 
     def route_condition(state: LearningPlanState) -> str:
@@ -178,35 +180,40 @@ def build_graph(
         return "placeholder"
 
     def scout_node(state: LearningPlanState) -> dict:
-        out = scout.generate_specialized_queries(state["user_query"])
+        with span("graph.scout"):
+            out = scout.generate_specialized_queries(state["user_query"])
         return {"scout_queries": _normalize_scout_queries(out)}
 
     def academic_node(state: LearningPlanState) -> dict:
         query = state.get("scout_queries", {}).get("ACADEMIC") or state["user_query"]
-        resp = academic.provide_academic_roadmap(query)
+        with span("graph.academic"):
+            resp = academic.provide_academic_roadmap(query)
         return {"academic_output": resp.content if resp else None}
 
     async def market_node(state: LearningPlanState) -> dict:
         query = state.get("scout_queries", {}).get("MARKET") or state["user_query"]
-        return {"market_output": await _run_market(market, query)}
+        with span("graph.market"):
+            return {"market_output": await _run_market(market, query)}
 
     async def practical_node(state: LearningPlanState) -> dict:
         query = state.get("scout_queries", {}).get("PRACTICAL") or state["user_query"]
-        repos = await _fetch_github_repos(query)
-        # provide_practical_advice uses the SYNC llm.invoke; calling it directly here would block the
-        # event loop for the whole LLM call and stall the concurrently-running Market node's awaits.
-        resp = await asyncio.to_thread(practical.provide_practical_advice, query, github_repos=repos)
+        with span("graph.practical"):
+            repos = await _fetch_github_repos(query)
+            # provide_practical_advice uses the SYNC llm.invoke; calling it directly here would block
+            # the event loop for the whole LLM call and stall the concurrently-running Market node.
+            resp = await asyncio.to_thread(practical.provide_practical_advice, query, github_repos=repos)
         return {"practical_output": resp.content if resp else None}
 
     def consensus_node(state: LearningPlanState) -> dict:
         market_data = state.get("market_output")
         market_text = market_data.get("summary") if market_data else None
-        sg = consensus.build_skill_graph(
-            state["user_query"],
-            state.get("academic_output"),
-            market_text,
-            state.get("practical_output"),
-        )
+        with span("graph.consensus"):
+            sg = consensus.build_skill_graph(
+                state["user_query"],
+                state.get("academic_output"),
+                market_text,
+                state.get("practical_output"),
+            )
         if not sg:
             return {"skill_graph": None, "skill_graph_mermaid": ""}
         return {
@@ -218,7 +225,8 @@ def build_graph(
         sg = state.get("skill_graph")
         if not sg:
             return {"review_passed": False, "review_notes": "No skill graph was produced to review."}
-        res = reviewer.review_skill_graph(state["user_query"], json.dumps(sg))
+        with span("graph.reviewer"):
+            res = reviewer.review_skill_graph(state["user_query"], json.dumps(sg))
         if not res:
             return {"review_passed": False, "review_notes": "Reviewer failed to evaluate the skill graph."}
         return {"review_passed": res.passed, "review_notes": res.notes}

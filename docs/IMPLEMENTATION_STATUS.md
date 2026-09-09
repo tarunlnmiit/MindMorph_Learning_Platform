@@ -21,7 +21,7 @@
 | **Backend** | **FastAPI** (`api/`) | FastAPI microservices + Celery/Redis workers |
 | **Memory / data** | **PostgreSQL** — learning sessions (JSONB) + per-user RAG vectors (pgvector); in-memory store for zero-infra dev (`MINDMORPH_STORE=memory`). No Redis/S3 | Pinecone (long-term) + Redis (short-term) + PostgreSQL + S3 |
 | **Grounding / RAG** | **Opt-in local RAG** (FastEmbed + pgvector/in-memory, `rag/`, `MINDMORPH_RAG=1`) — augments web search, never replaces it | RAG pipelines + agentic web search (Playwright/Firecrawl) |
-| **Observability** | LangSmith hooks (optional) + per-invocation token/cost accounting (`services/cost.py` `TokenMeter`); no latency metrics | Prometheus/Grafana/OpenTelemetry + Prompt Registry feedback loop |
+| **Observability** | LangSmith hooks (optional) + per-invocation token/cost accounting (`services/cost.py` `TokenMeter`) + per-stage wall-clock spans (`services/timing.py`, surfaced on `learning_session.timing` / `lessons[node].timing` and as `timing:` log lines); no metrics backend/exporter | Prometheus/Grafana/OpenTelemetry + Prompt Registry feedback loop |
 
 The repo is a **working multi-agent prototype** with **P0-P1 complete**: the Learning-Plan DAG
 (orchestrate → scout → academic/market/practical → consensus → reviewer → Skill Dependency Graph),

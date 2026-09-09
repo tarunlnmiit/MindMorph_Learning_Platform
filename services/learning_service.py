@@ -20,6 +20,7 @@ from services.completion import (
 )
 from services.cost import TokenMeter
 from services.events import STAGES, has_event, record_event
+from services.timing import collect, span, spans_payload
 from services.mastery import (
     MASTERY_THRESHOLD,
     REVIEW_THRESHOLD,
@@ -183,7 +184,7 @@ STAGE_LABELS = {
 }
 
 
-def _route_final_state(final_state: dict, format_type: str) -> dict:
+def _route_final_state(final_state: dict, format_type: str, timing: Optional[dict] = None) -> dict:
     """Shape a finished orchestration-graph state into ``{route, learning_session, final_content,
     exercise}``. Only the SCOUT route yields a persistable ``learning_session`` (the adaptive loop);
     CONTENT/EXERCISE are transient. Shared by ``start_session`` and ``astream_session`` so the
@@ -192,7 +193,13 @@ def _route_final_state(final_state: dict, format_type: str) -> dict:
     route = final_state.get("route", "UNKNOWN")
     out = {"route": route, "learning_session": None, "final_content": None, "exercise": None}
     if route == "SCOUT":
-        out["learning_session"] = new_learning_session(final_state, format_type)
+        ls = new_learning_session(final_state, format_type)
+        # Graph stages run before any session exists, so the spans are collected by the caller and
+        # attached here — the one shaping point both the sync and streaming callers go through.
+        # CONTENT/EXERCISE routes persist nothing, so their spans stay log-only.
+        if ls is not None and timing:
+            ls["timing"] = {"graph": timing}
+        out["learning_session"] = ls
     elif route == "CONTENT":
         out["final_content"] = final_state.get("final_content")
     elif route == "EXERCISE":
@@ -212,10 +219,11 @@ def start_session(user_query: str, format_type: str = "B") -> dict:
     yields a persistable ``learning_session`` (the adaptive loop); CONTENT/EXERCISE are transient.
     """
     logger.info("service: start_session (query=%r, format=%s)", user_query, format_type)
-    final_state = _run_async(
-        _get_orchestration_graph().ainvoke({"user_query": user_query, "format_type": format_type})
-    )
-    return _route_final_state(final_state, format_type)
+    with collect() as spans, span("graph.total"):
+        final_state = _run_async(
+            _get_orchestration_graph().ainvoke({"user_query": user_query, "format_type": format_type})
+        )
+    return _route_final_state(final_state, format_type, spans_payload(spans))
 
 
 async def astream_session(user_query: str, format_type: str = "B"):
@@ -231,13 +239,14 @@ async def astream_session(user_query: str, format_type: str = "B"):
     """
     logger.info("service: astream_session (query=%r, format=%s)", user_query, format_type)
     final_state: dict = {}
-    async for update in _get_orchestration_graph().astream(
-        {"user_query": user_query, "format_type": format_type}, stream_mode="updates"
-    ):
-        for node_name, node_output in update.items():
-            final_state.update(node_output or {})
-            yield {"stage": node_name, "label": STAGE_LABELS.get(node_name, node_name)}
-    yield {"result": _route_final_state(final_state, format_type)}
+    with collect() as spans, span("graph.total"):
+        async for update in _get_orchestration_graph().astream(
+            {"user_query": user_query, "format_type": format_type}, stream_mode="updates"
+        ):
+            for node_name, node_output in update.items():
+                final_state.update(node_output or {})
+                yield {"stage": node_name, "label": STAGE_LABELS.get(node_name, node_name)}
+    yield {"result": _route_final_state(final_state, format_type, spans_payload(spans))}
 
 
 def _run_lesson(
@@ -250,7 +259,8 @@ def _run_lesson(
     """Invoke the lesson graph for one skill node (content + embedded exercise).
 
     Returns ``(out, usage)`` where ``usage`` is a ``TokenMeter.totals()`` dict measuring the token
-    cost of this compose (aggregated across all nested LLM calls).
+    cost of this compose (aggregated across all nested LLM calls). Wall-clock spans for the compose
+    are recorded by ``services.timing`` inside the lesson graph and collected by the caller.
     """
     meter = TokenMeter()
     out = _run_async(
@@ -298,10 +308,11 @@ def open_lesson(ls: dict, node_id: str, user_id: Optional[str] = None) -> dict:
         node = next(n for n in skill_graph["nodes"] if n["id"] == node_id)
         prior_weaknesses = ls["node_state"].get(node_id, {}).get("weaknesses", [])
         logger.info("service: composing lesson for node %s", node_id)
-        out, lesson_usage = _run_lesson(
-            node, ls.get("format_type", "B"), prior_weaknesses, user_id,
-            path_context=ls.get("summary"),
-        )
+        with collect() as spans, span("lesson.total"):
+            out, lesson_usage = _run_lesson(
+                node, ls.get("format_type", "B"), prior_weaknesses, user_id,
+                path_context=ls.get("summary"),
+            )
         ls["lessons"][node_id] = {
             "content": out.get("content"),
             "exercise": {
@@ -310,6 +321,7 @@ def open_lesson(ls: dict, node_id: str, user_id: Optional[str] = None) -> dict:
                 "grading_artifact": out.get("grading_artifact"),
             },
             "usage": lesson_usage,
+            "timing": spans_payload(spans),  # content vs exercise compose, beside the cost meter
         }
         usage["composes"] += 1
         usage["tokens_in"] += lesson_usage["tokens_in"]
@@ -409,27 +421,37 @@ def grade(ls: dict, node_id: str, solution: str) -> tuple[dict, list[str], dict 
     from agents.exercise.grader_agent import grade_submission
 
     logger.info("service: grading %s submission for node %s", fmt, node_id)
-    result = grade_submission(fmt, solution, artifact)
+    # Named for what actually runs: a coding_challenge executes the generated pytest suite in a
+    # subprocess, a case_study is an LLM rubric call — lumping both under one name would misattribute
+    # an LLM round-trip as test execution.
+    exec_stage = "grade.tests" if fmt == "coding_challenge" else "grade.rubric_llm"
     new_node_ids: list[str] = []
-    if result is not None:
-        apply_score(ls, node_id, fmt, result)
-        score = float(result.get("score", 0.0) or 0.0)
-        record_event(ls, STAGES.EXERCISE_GRADED, node_id=node_id, score=score,
-                     passed=bool(result.get("passed")))
-        # Read the graded node's status BEFORE adapt_after_grade — adaptation only adds new prerequisite
-        # nodes, it never changes the graded node's own status, so this snapshot is the final one.
-        status = ls["node_state"].get(node_id, {}).get("status")
-        if status == "mastered":
-            record_event(ls, STAGES.NODE_MASTERED, node_id=node_id)
-        elif status == "needs_review":
-            record_event(ls, STAGES.NODE_NEEDS_REVIEW, node_id=node_id)
-        # adapt_after_grade may emit lesson_regenerated and mutate the graph; run it before the
-        # completion check so a freshly-added remedial prerequisite correctly blocks "complete".
-        new_node_ids = adapt_after_grade(ls, node_id)
-        if not has_event(ls, STAGES.PATH_COMPLETED) and is_session_complete(
-            ls["skill_graph"], ls["node_state"]
-        ):
-            record_event(ls, STAGES.PATH_COMPLETED)
+    with collect() as spans:
+        with span(exec_stage):
+            result = grade_submission(fmt, solution, artifact)
+        if result is not None:
+            apply_score(ls, node_id, fmt, result)
+            score = float(result.get("score", 0.0) or 0.0)
+            record_event(ls, STAGES.EXERCISE_GRADED, node_id=node_id, score=score,
+                         passed=bool(result.get("passed")))
+            # Read the graded node's status BEFORE adapt_after_grade — adaptation only adds new
+            # prerequisite nodes, it never changes the graded node's own status, so this snapshot is
+            # the final one.
+            status = ls["node_state"].get(node_id, {}).get("status")
+            if status == "mastered":
+                record_event(ls, STAGES.NODE_MASTERED, node_id=node_id)
+            elif status == "needs_review":
+                record_event(ls, STAGES.NODE_NEEDS_REVIEW, node_id=node_id)
+            # adapt_after_grade may emit lesson_regenerated and mutate the graph; run it before the
+            # completion check so a freshly-added remedial prerequisite correctly blocks "complete".
+            with span("grade.adapt"):
+                new_node_ids = adapt_after_grade(ls, node_id)
+            if not has_event(ls, STAGES.PATH_COMPLETED) and is_session_complete(
+                ls["skill_graph"], ls["node_state"]
+            ):
+                record_event(ls, STAGES.PATH_COMPLETED)
+    # Last grade only — a per-node history here would grow the JSONB blob without bound.
+    ls["timing"] = {**ls.get("timing", {}), "grade": spans_payload(spans)}
     return ls, new_node_ids, result
 
 

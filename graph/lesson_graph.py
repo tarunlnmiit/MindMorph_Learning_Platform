@@ -22,6 +22,7 @@ from langgraph.graph import StateGraph, START, END
 
 from graph.content_graph import build_content_graph
 from graph.exercise_graph import build_exercise_graph
+from services.timing import span
 
 
 class LessonState(TypedDict, total=False):
@@ -65,22 +66,24 @@ def build_lesson_graph(content_graph: Optional[Any] = None, exercise_graph: Opti
         weaknesses = state.get("prior_weaknesses") or []
         prior_feedback = ", ".join(weaknesses) if weaknesses else None
         logger.info("Lesson: composing content for skill %r", skill_query)
-        out = await content_graph.ainvoke(
-            {
-                "user_query": skill_query,
-                "format_type": state.get("format_type", "B"),
-                "prior_feedback": prior_feedback,
-                "user_id": state.get("user_id"),
-                "path_context": state.get("path_context"),
-            }
-        )
+        with span("lesson.content"):
+            out = await content_graph.ainvoke(
+                {
+                    "user_query": skill_query,
+                    "format_type": state.get("format_type", "B"),
+                    "prior_feedback": prior_feedback,
+                    "user_id": state.get("user_id"),
+                    "path_context": state.get("path_context"),
+                }
+            )
         return {"skill_query": skill_query, "content": out.get("final_content")}
 
     async def exercise_node(state: LessonState) -> dict:
         # Reuse the skill_query the content node already derived (falls back if absent).
         skill_query = state.get("skill_query") or _skill_query(state)
         logger.info("Lesson: composing exercise for skill %r", skill_query)
-        out = await exercise_graph.ainvoke({"user_query": skill_query})
+        with span("lesson.exercise"):
+            out = await exercise_graph.ainvoke({"user_query": skill_query})
         return {
             "exercise_format": out.get("exercise_format"),
             "exercise_statement": out.get("exercise_statement"),
