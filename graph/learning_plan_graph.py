@@ -106,15 +106,23 @@ async def _run_market(market_agent: Any, query: str, location: str = "United Sta
 
 
 async def _fetch_github_repos(query: str) -> Optional[Any]:
-    """Resilient GitHub MCP lookup. Returns None (no hard failure) when token/network is absent."""
+    """Resilient GitHub MCP lookup. Returns None (no hard failure) when token/network is absent.
+
+    Every ``None`` here becomes a silent ``grounded=False`` downstream, so each way of returning
+    one says why at WARNING — otherwise ungrounded advice is indistinguishable from grounded.
+    """
     try:
         client = MCPClientInitialization()
         if not client.token:
+            logger.warning("GitHub grounding unavailable: GITHUB_PERSONAL_TOKEN is not set")
             return None
         await client.initialize()
-        return await client.search_github_repositories(query)
+        repos = await client.search_github_repositories(query)
+        if not repos:
+            logger.warning("GitHub grounding empty: no repositories returned for %r", query)
+        return repos
     except Exception:
-        logger.exception("GitHub repo fetch error")
+        logger.exception("GitHub grounding failed: repo fetch error")
         return None
 
 
