@@ -16,19 +16,19 @@
 |---|---|---|
 | **Agent orchestration** | **LangGraph** state graph (`graph/learning_plan_graph.py`, `graph/content_graph.py`) — Learning-Plan + Content DAGs. CrewAI is a non-goal — parallel LangGraph nodes already cover the concurrency it would add | **LangGraph + CrewAI** — LangGraph state-graph/DAG control + CrewAI role-based specialist crews |
 | **Grounding / web search** | Live DuckDuckGo (`ddgs`) in the Content dual-path Factual agent | RAG pipelines + agentic web search (Playwright/Firecrawl) |
-| **LLM** | Groq-primary / local-Claude-CLI-fallback switch, `openai/gpt-oss-120b` (`config.py`) — the CLI side is local-dev only, not deployable | Multi-vendor **Model Router** (GPT, Claude, Gemini, Bedrock) |
+| **LLM** | Groq key-**pool** primary (`openai/gpt-oss-120b`, rotated across `GROQ_API_KEYS`) → local **Ollama** fallback (`qwen2.5:7b`/`:14b`) (`config.py`, `llm_providers.py`). Keys are optional — with none set the app runs on Ollama alone | Multi-vendor **Model Router** (GPT, Claude, Gemini, Bedrock) |
 | **Frontend** | **Next.js** (`web/`) | Next.js 14 / React 18 + JupyterLite |
 | **Backend** | **FastAPI** (`api/`) | FastAPI microservices + Celery/Redis workers |
 | **Memory / data** | **PostgreSQL** — learning sessions (JSONB) + per-user RAG vectors (pgvector); in-memory store for zero-infra dev (`MINDMORPH_STORE=memory`). No Redis/S3 | Pinecone (long-term) + Redis (short-term) + PostgreSQL + S3 |
 | **Grounding / RAG** | **Opt-in local RAG** (FastEmbed + pgvector/in-memory, `rag/`, `MINDMORPH_RAG=1`) — augments web search, never replaces it | RAG pipelines + agentic web search (Playwright/Firecrawl) |
-| **Observability** | LangSmith hooks (optional) | Prometheus/Grafana/OpenTelemetry + Prompt Registry feedback loop |
+| **Observability** | LangSmith hooks (optional) + per-invocation token/cost accounting (`services/cost.py` `TokenMeter`); no latency metrics | Prometheus/Grafana/OpenTelemetry + Prompt Registry feedback loop |
 
 The repo is a **working multi-agent prototype** with **P0-P1 complete**: the Learning-Plan DAG
 (orchestrate → scout → academic/market/practical → consensus → reviewer → Skill Dependency Graph),
 the dual-path Content DAG (creative + live web grounding → synthesizer), the Exercise DAG + live
 grading, and the FastAPI + Postgres backend all run end-to-end. CrewAI is a non-goal — parallel
 LangGraph nodes already cover the concurrency it would add. Still open: multi-vendor LLM routing
-beyond the current Groq-primary/Claude-CLI-fallback switch, and the infra/observability layers
+beyond the current Groq-pool → local-Ollama chain, and the infra/observability layers
 (see roadmap below).
 
 ---
@@ -37,7 +37,7 @@ beyond the current Groq-primary/Claude-CLI-fallback switch, and the infra/observ
 
 | Agent / Step (target) | Status | Code path | Notes |
 |---|---|---|---|
-| Orchestrator Agent (route SCOUT/CONTENT/EXERCISE) | ✅ | `agents/orchestrator/orchestrator_agent.py` | Structured output; routes inside the LangGraph graph (`graph/learning_plan_graph.py`). SCOUT + CONTENT wired; EXERCISE → placeholder node. |
+| Orchestrator Agent (route SCOUT/CONTENT/EXERCISE) | ✅ | `agents/orchestrator/orchestrator_agent.py` | Structured output; routes inside the LangGraph graph (`graph/learning_plan_graph.py`). SCOUT, CONTENT and EXERCISE all wired to real nodes; only an unrecognized route hits the placeholder. |
 | Scout Agent (decompose → Academic/Market/Practical queries) | ✅ | `agents/scout/scout_agent.py` | Returns `ScoutOutputSchema`; "Query" and "Prompt" variants. |
 | Academic Agent (check university curricula) | ✅ | `agents/academic/academic_agent.py` | Real agent + `prompts/academic_prompt.py` (university-curriculum framing). Replaced the old inline `llm.invoke`. |
 | Market Agent (scan job postings) | ✅ | `agents/market/market_agent.py` + `tools/job_scrapper_tool.py` | Apify LinkedIn MCP scrape + LLM summarize; runs as a graph node (degrades to None on empty scrape). |
@@ -64,7 +64,7 @@ beyond the current Groq-primary/Claude-CLI-fallback switch, and the infra/observ
 |---|---|---|---|
 | Format Selector / GitHub / Blog / Dataset agents | ✅ | `agents/exercise/format_selector_agent.py`, `graph/exercise_graph.py` | LangGraph Exercise DAG: format selector → [GitHub MCP \| Blog (ddgs) \| Dataset (ddgs links)] fan-in. EXERCISE route now live (no more placeholder). |
 | Synthesizer / Grading Setup (unit tests + rubric) | ✅ | `agents/exercise/exercise_synthesizer_agent.py`, `agents/exercise/grader_agent.py` | Synthesizer personalizes; Grader emits unit tests (coding) or rubric (case study). |
-| **Live auto-grading** | ✅ | `tools/code_executor.py`, `grader_agent.grade_submission` | Coding → runs submission against tests in an isolated subprocess (self-contained runner, no pytest dep; hang-guard, not a sandbox). Case study → LLM rubric scoring. Wired into `app.py` Grade button. |
+| **Live auto-grading** | ✅ | `tools/code_executor.py`, `grader_agent.grade_submission` | Coding → runs submission against tests in an isolated subprocess (self-contained runner, no pytest dep; hang-guard, not a sandbox). Case study → LLM rubric scoring. Wired into `POST /sessions/{user}/{session}/grade` (the Streamlit Grade button is gone with `app.py`). |
 
 ## 5. Status by Architecture Layer
 
@@ -72,11 +72,11 @@ beyond the current Groq-primary/Claude-CLI-fallback switch, and the infra/observ
 |---|---|---|
 | Frontend | ✅ | **Next.js** (`web/`) is the product; legacy Streamlit `app.py` **retired** (P3 #12). JupyterLite in-browser scratchpad embedded in the lesson. |
 | Application Service | 🟡 | **FastAPI** (`api/`) exposes the loop over HTTP; agents + LangSmith prompt registry exist. Still **no** Celery, gateway, rate limiting. |
-| AI / LLM | 🟡 | **LangGraph** orchestration ✅ (CrewAI is a non-goal — parallel LangGraph nodes cover it). Grounding: live web (DuckDuckGo) **+ opt-in local RAG** (FastEmbed + InMemoryVectorStore, `rag/`) in the Content dual-path. **Groq-primary / local-Claude-CLI-fallback switch** ✅ (`config.get_chat_model`) — the CLI side is local-dev only, not deployable. **Eval pipeline** 🟡 — offline content-groundedness LLM-judge (`evals/`, `python -m evals.run`). **Prompt Registry**: ✅ via `prompts/prompt_registry_wrapper_method.py` (LangSmith). |
+| AI / LLM | 🟡 | **LangGraph** orchestration ✅ (CrewAI is a non-goal — parallel LangGraph nodes cover it). Grounding: live web (DuckDuckGo) **+ opt-in local RAG** (FastEmbed + InMemoryVectorStore, `rag/`) in the Content dual-path. **Groq key-pool → local-Ollama provider chain** ✅ (`config.get_chat_model`, `llm_providers.ProviderChain`) — keys optional; zero-key clones run entirely on local Ollama. **Eval pipeline** 🟡 — offline content-groundedness LLM-judge (`evals/`, `python -m evals.run`). **Prompt Registry**: ✅ via `prompts/prompt_registry_wrapper_method.py` (LangSmith). |
 | Data | 🟡 | **PostgreSQL** ✅ — learning sessions (JSONB, #6) + per-user RAG vectors (**pgvector**, #9). Still **no** Redis/S3/Kafka. |
 | Infrastructure | ⛔ | No K8s/Terraform/Prometheus/CI-CD. |
 | Analytics & Continuous Improvement | ⛔ | No telemetry pipeline, warehouse, or human-review loop. |
-| LLM Ops & Production | 🟡 | Vendor fallback switch ✅ + content-groundedness eval ✅ (`evals/`). Still **no** cost/latency observability or deployment pipeline. |
+| LLM Ops & Production | 🟡 | Provider chain (Groq pool → Ollama) ✅ + content-groundedness eval ✅ (`evals/`) + **token/cost accounting** 🟡 (`services/cost.py` `TokenMeter`, priced per model, on the lesson-compose path only — see Cross-cutting). Still **no** latency observability or deployment pipeline. |
 | Security & Governance | ⛔ | No auth/RBAC/encryption/PII scrubbing. Only `.env` secrets + `.gitignore`. |
 
 ## 6. Supporting components
@@ -88,9 +88,9 @@ beyond the current Groq-primary/Claude-CLI-fallback switch, and the infra/observ
 | GitHub MCP client | ✅ | `tools/github_mcp_client.py` | `search_github_repositories` returns results; wired into the Practical node (degrades to None without a token). |
 | Web search (DuckDuckGo) | ✅ | `agents/factual/factual_agent.py` | `ddgs` live search for the Content Factual path. |
 | Skill graph renderer | ✅ | `graph/skill_graph_render.py` | Deterministic SkillGraph JSON → Mermaid. |
-| LLM config | ✅ | `config.py` | Groq `openai/gpt-oss-120b`, temp 0.1; validates `GROQ_API_KEY`. |
+| LLM config | ✅ | `config.py` | Groq `openai/gpt-oss-120b` / local Ollama `qwen2.5:7b`\|`:14b`, temp 0.1. `GROQ_API_KEYS` (comma-separated pool) is optional and validated nowhere — absent/empty simply selects the Ollama path. |
 | Next.js frontend | ✅ | `web/` | SCOUT skill-graph + CONTENT dual-path, Mermaid render, lesson view, grading. Legacy Streamlit `app.py` **retired** (P3 #12) — it no longer exists in the repo. |
-| Tests | 🟡 | `tests/` | 213 passed, 3 skipped across 28 files (graph routing/fan-in, content dual-path, skill-graph render, RAG/ingestion/pgvector, assessment, tutor chat, cost/usage, funnel events, import guards). |
+| Tests | 🟡 | `tests/` | 229 passed, 3 skipped across 27 files (graph routing/fan-in, content dual-path, skill-graph render, RAG/ingestion/pgvector, assessment, tutor chat, provider-chain rotation/fallback, cost/usage, funnel events, import guards). |
 
 ---
 
@@ -126,7 +126,8 @@ Each item notes the **architecture section** it satisfies and the **code gap** i
     a graded score mutates the graph (remedial prerequisite nodes on a low score / unlock edges on
     mastery) and triggers **score-aware regeneration** of the failed node's lesson against the gaps.
     `graph/lesson_graph.py`, `agents/adaptation/`, `graph/skill_graph_adapt.py` (deterministic,
-    id-stable merge). State lives in `st.session_state.learning_session` (maps 1:1 to P1 #6 tables).
+    id-stable merge). State lives in the `learning_session` blob (originally Streamlit session state;
+    persisted to Postgres JSONB by #6).
     Deferred to #6: Postgres/Redis persistence of `node_state`/`lessons`.
 6. ✅ **Persistence + backend** — **FastAPI** service (`api/`) exposes the loop over HTTP (create session /
    list / get / open lesson / grade), each endpoint load→service→save. Loop logic extracted Streamlit-free
@@ -138,7 +139,7 @@ Each item notes the **architecture section** it satisfies and the **code gap** i
    state intact** (cross-process durability proof); DB-gated integration test guards the JSONB path. 108
    tests green. *Deferred:* Redis (JSONB suffices at prototype scale); re-pointing Streamlit at the API
    (#12 retires it); Pinecone. *Satisfies:* §5.2, §5.4. *Closes:* the stateless prototype.
-7. 🟡 **Vendor fallback switch + RAG** — _RAG (grounding):_ `rag/` package adds a **local, no-API-key** retrieval
+7. 🟡 **Provider chain (Groq pool → Ollama) + RAG** — _RAG (grounding):_ `rag/` package adds a **local, no-API-key** retrieval
    arm. `rag/embeddings.py` wraps **FastEmbed** (ONNX `BAAI/bge-small-en-v1.5`, no torch) as a LangChain
    `Embeddings`; `rag/store.py` `RagStore` over `langchain_core` `InMemoryVectorStore` (chunk + `Source:`
    output mirrors `gather_facts`). `build_content_graph(..., retriever=)` merges KB chunks **+** web search
@@ -146,18 +147,27 @@ Each item notes the **architecture section** it satisfies and the **code gap** i
    web. Corpus = `knowledge_base/*.md|.txt` (P2 #9 uploads feed the same store later). **Opt-in**
    (`MINDMORPH_RAG=1`, `MINDMORPH_KNOWLEDGE_DIR`) so dev/tests never download the model; verified live
    (real FastEmbed indexed the seed corpus and retrieved on a semantic query). Remaining ⛔: pgvector at
-   scale, RAG in the exercise blog/dataset path, re-ranking. _Vendor fallback switch:_
-   `llm_providers.py` + `config.get_chat_model(tier, provider, fallback)`:
-   **vendor-selectable**, two independent vendor choices (`groq` | `claude_cli`). **Primary** =
-   `provider` arg or `MINDMORPH_LLM_PROVIDER` env (default `groq`); **fallback** = `fallback` arg or
-   `MINDMORPH_LLM_FALLBACK` env (default `claude_cli` | `none` to disable; a same-vendor fallback is
-   skipped). The fallback fires only on a primary failure (e.g. Groq free-tier **TPM 413**) and composes
-   through `with_structured_output` via LangChain `with_fallbacks`. Claude side runs the **local Claude
-   Code CLI** headless (`claude -p`, Haiku for default / Sonnet for complex). E.g. `MINDMORPH_LLM_PROVIDER=claude_cli`
-   `MINDMORPH_LLM_FALLBACK=groq` → Claude primary, Groq fallback. **Placeholder** — the CLI uses the local
-   Claude Code OAuth session (local-dev only, not deployable); swap in `langchain-anthropic` once an API
-   key exists, agents unchanged. Structured-output-over-CLI verified live (real Haiku → parseable JSON).
-   Remote multi-vendor HTTP routing (vs the local CLI) still open. *Satisfies (partial):* §5.3, §5.7.
+   scale, RAG in the exercise blog/dataset path, re-ranking. _Provider chain:_
+   `llm_providers.py` + `config.get_chat_model(tier, provider, fallback)`: two vendor choices
+   (`groq` | `ollama`). **Primary** = `provider` arg or `MINDMORPH_LLM_PROVIDER` env (defaults to
+   `groq` when `GROQ_API_KEYS` holds keys, `ollama` otherwise); **fallback** = `fallback` arg or
+   `MINDMORPH_LLM_FALLBACK` env (default `ollama` | `none` to disable). Groq keys are **optional** —
+   `config.py` validates nothing, and asking for `groq` with an empty pool silently returns the local
+   model, so a clone with no `.env` runs on Ollama alone. `ProviderChain` holds **one `ChatGroq` per
+   key** (`max_retries=0`, so a 429 surfaces to our layer) and walks the pool in order: it **rotates to
+   the next key** on `{401,403,408,413,429,500,502,503,529}`; treats anything else — **404
+   model-not-found above all** — as permanent (logs ERROR, stops trying keys, drops to the fallback);
+   and **re-samples once on the same key** for structured-output parse failures
+   (`OutputParserException` / pydantic `ValidationError`), which are sampling variance, not a bad key.
+   Exhausting the pool falls through to Ollama. Structured output is
+   `with_structured_output(..., method="json_schema")`, mapped over every member (fallback included)
+   across every structured-output agent (orchestrator, scout, consensus, reviewer, assessment, format
+   selector, grader, adaptation); `astream` rotates only *before* the first token, so a
+   half-delivered tutor reply is never restarted. Two tiers: `default` and `complex`
+   (Consensus/Reviewer/Scout). Locally they differ (`qwen2.5:7b` vs `qwen2.5:14b`); on Groq
+   `MINDMORPH_GROQ_MODEL_COMPLEX` **defaults to the same `openai/gpt-oss-120b`**, so the tier split
+   only bites on Ollama unless you override it.
+   Remote multi-vendor HTTP routing (Anthropic/OpenAI/Gemini) still open. *Satisfies (partial):* §5.3, §5.7.
 
 ### P2 — Personalization & ingestion
 8. 🟡 **Onboarding + Dynamic Skill Assessment** — after a path is created, `SkillAssessmentAgent`
@@ -193,8 +203,9 @@ Each item notes the **architecture section** it satisfies and the **code gap** i
     the learner's RAG material (`build_tutor_messages` pulls `lessons[node_id]` + per-user
     `RagStore.retrieve`). `POST /sessions/{user}/{session}/chat` streams tokens over **SSE** and persists
     each turn to `learning_session["chat"]` (JSONB; user message saved before streaming so it survives a
-    dropped stream). Streams via **ChatGroq directly** (the `FallbackChatModel` wrapper can't emit tokens
-    incrementally — chat has no CLI fallback). Web `TutorChat.tsx` (buffered SSE-over-fetch) on the session
+    dropped stream). Streams through the **same provider chain** as every other agent
+    (`get_chat_model("default", temperature=…)`; `ProviderChain.astream` rotates keys only before the
+    first token, then falls back to Ollama). Web `TutorChat.tsx` (buffered SSE-over-fetch) on the session
     page. Verified live (real Groq → 74 token frames). *Deferred:* **voice** (Whisper STT / ElevenLabs TTS),
     streaming through the router, multi-thread chats. *Satisfies:* §2.
 11. **Screen Vision + Browser Automation agents.** *Satisfies:* §2.
@@ -214,9 +225,9 @@ Each item notes the **architecture section** it satisfies and the **code gap** i
     *Satisfies:* §5.5, §5.6, §5.8.
 
 ### Cross-cutting
-- 🟡 **Test suite** — pytest (`tests/`, 213 passed, 3 skipped: graph routing/fan-in, content dual-path, skill-graph
-  render, RAG/ingestion/pgvector, assessment, tutor chat, cost/usage accounting, funnel events, import
-  guards). Growing.
+- 🟡 **Test suite** — pytest (`tests/`, 229 passed, 3 skipped: graph routing/fan-in, content dual-path, skill-graph
+  render, RAG/ingestion/pgvector, assessment, tutor chat, provider-chain rotation/fallback, cost/usage
+  accounting, funnel events, import guards). Growing.
 - 🟡 **Funnel instrumentation (Gate-1)** — `services/events.py` appends a structured event to an
   append-only `learning_session["events"]` timeline at every loop chokepoint (`session_created`,
   `assessment_submitted`, `lesson_opened`, `exercise_graded`, `node_mastered`/`needs_review`,
@@ -229,11 +240,13 @@ Each item notes the **architecture section** it satisfies and the **code gap** i
   dashboards/Kafka (P3 #13), per-user analytics. De-risks the Gate-1 "watch real users" checkpoint.
 - 🟡 **Cost observability (unit economics)** — `services/cost.py` `TokenMeter` (a LangChain callback
   attached to the lesson-graph invocation in `_run_lesson`) aggregates token usage across all nested
-  LLM calls; `estimate_cost` prices it off `MODEL_PRICES` (Groq `openai/gpt-oss-120b` priced; Claude CLI
-  placeholder = $0, flagged `unknown`). `open_lesson` records per-lesson usage on the cached entry and
+  LLM calls; `estimate_cost` prices it off `MODEL_PRICES` (Groq `openai/gpt-oss-120b` at $0.15/$0.60 per 1M
+  in/out; local `qwen2.5:*` at a **real** $0.00 — self-hosted, not a placeholder). An unpriced model
+  id or a call reporting no usage sets `unknown`, which stays distinct from a priced $0. `open_lesson` records per-lesson usage on the cached entry and
   accumulates `learning_session["usage"]` (`composes`, `cache_hits`, `tokens_in/out`, `est_cost_usd`),
   logging each open HIT/MISS. Rides in the JSONB blob (persists across restart) + the existing
-  `SessionResponse`. Live: one compose ≈ 5.2k/2.5k tokens ≈ **$0.005** on Groq. Pairs with the
+  `SessionResponse`. Live: one compose ≈ 5.2k in / 2.5k out tokens ≈ **$0.002** on Groq at the prices above
+  (an earlier note said $0.005; that predates the current `MODEL_PRICES` and doesn't reconcile). Pairs with the
   already-durable per-`node_id` lesson cache — together the two halves of the "$/active-user" hard
   gate. *Deferred:* DAG/assessment/tutor cost, per-user aggregation, dashboards.
 - 🟡 **Eval pipeline** — `evals/`: offline **content-groundedness LLM-judge** (`python -m evals.run`,
