@@ -1,7 +1,8 @@
-"""Live smoke test: confirm with_structured_output actually works through ChatOllama
-against qwen2.5:14b, using the app's own code path (config.get_chat_model / agents).
+"""Live smoke test: confirm with_structured_output actually works through whichever provider
+config resolves — rotating Groq pool by default, local Ollama with no keys — using the app's own
+code path (config.get_chat_model / agents).
 
-NOT part of the pytest suite — hits a real local daemon, must be run manually:
+NOT part of the pytest suite — hits a real provider, must be run manually:
 
     conda run -n mindmorph python scripts/live_smoke.py
 """
@@ -33,11 +34,20 @@ def timed(label, fn):
 
 def main():
     import config
-    print(
-        f"Model path: Orchestrator uses default tier ({config.OLLAMA_MODEL}); "
-        f"Consensus uses complex tier ({config.OLLAMA_MODEL_COMPLEX}) — both via ChatOllama "
-        f"(json_schema structured output)"
-    )
+    from llm_providers import ProviderChain
+
+    keys = len(config.groq_api_keys())
+    if keys:
+        print(
+            f"Model path: Groq pool of {keys} keys -> Ollama fallback. Orchestrator uses default tier "
+            f"({config.GROQ_MODEL}); Consensus uses complex tier ({config.GROQ_MODEL_COMPLEX}) "
+            f"(json_schema structured output)"
+        )
+    else:
+        print(
+            f"Model path: no Groq keys — local Ollama only. Orchestrator uses default tier "
+            f"({config.OLLAMA_MODEL}); Consensus uses complex tier ({config.OLLAMA_MODEL_COMPLEX})"
+        )
 
     orch = OrchestratorAgent(push_to_langsmith=False)
     orch_result, orch_t, orch_err = timed(
@@ -61,6 +71,20 @@ def main():
         "Orchestrator.route_query (2nd call, reliability check)",
         lambda: orch.route_query("Explain what a Python decorator is"),
     )
+
+    # One metered call so the model id the provider actually stamps can be checked against
+    # services.cost.MODEL_PRICES — a mismatch there is what makes a paid call look free.
+    from services.cost import MODEL_PRICES, TokenMeter
+
+    meter = TokenMeter()
+    try:
+        config.llm.invoke("Say OK.", config={"callbacks": [meter]})
+        totals = meter.totals()
+        print(f"\n--- cost meter ---\n{totals}")
+        for model in totals["by_model"]:
+            print(f"price for {model!r} in MODEL_PRICES: {MODEL_PRICES.get(model, 'MISSING — would count $0')}")
+    except Exception as e:
+        print(f"\n--- cost meter --- FAILED: {type(e).__name__}: {e}")
 
     print("\n=== SUMMARY ===")
     print(f"Orchestrator call 1: {'OK' if orch_err is None else 'FAILED'} ({orch_t:.2f}s)")

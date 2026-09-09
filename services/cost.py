@@ -18,14 +18,21 @@ from langchain_core.outputs import LLMResult
 logger = logging.getLogger(__name__)
 
 # (input $/1M, output $/1M). Verify/update against current vendor pricing.
-# The only backend is local Ollama, tiered across two models (config.OLLAMA_MODEL default tier,
-# config.OLLAMA_MODEL_COMPLEX complex tier) — self-hosted inference has no metered API cost, so both
-# honestly price at 0.0. This is a real price, not an "unknown model" placeholder: the meter still
-# counts tokens and calls (see TokenMeter) so throughput/usage stays observable even though $/user is
-# now $0.
+#
+# Local Ollama (config.OLLAMA_MODEL default tier, config.OLLAMA_MODEL_COMPLEX complex tier) is
+# self-hosted, so it has no metered API cost and honestly prices at 0.0. That is a real price, not an
+# "unknown model" placeholder: the meter still counts tokens and calls (see TokenMeter) so
+# throughput/usage stays observable even when $/user is $0.
+#
+# Groq gpt-oss-120b (both tiers when GROQ_API_KEYS is set) is metered. Source: Groq's published
+# on-demand pricing for openai/gpt-oss-120b, $0.15/1M input and $0.60/1M output (groq.com/pricing).
+# The free tier bills $0 but is quota-capped, so these numbers are what the same usage would cost on
+# the paid tier — that is the figure the unit-economics gate cares about.
 MODEL_PRICES: dict[str, tuple[float, float]] = {
     "qwen2.5:14b": (0.0, 0.0),
     "qwen2.5:7b": (0.0, 0.0),
+    "openai/gpt-oss-120b": (0.15, 0.60),
+    "openai/gpt-oss-20b": (0.10, 0.50),
 }
 
 _UNKNOWN_MODEL = "unknown"
@@ -82,7 +89,8 @@ class TokenMeter(BaseCallbackHandler):
 
     Attach via ``graph.ainvoke(state, config={"callbacks": [meter]})``; LangChain propagates it to all
     nested runnables. A call that reports no usage (e.g. the Claude CLI placeholder) sets ``unknown``
-    so a zero cost is never mistaken for a free real call.
+    so a zero cost is never mistaken for a free real call. A priced $0 (local Ollama) is not
+    ``unknown`` — it is a real price.
     """
 
     def __init__(self) -> None:

@@ -64,11 +64,15 @@ through the editor above.
   embeddings, so the platform runs with no vector-DB account and no embedding API cost. Set
   `MINDMORPH_STORE=postgres` and the same interface persists to pgvector. `rag/store.py` and
   `rag/pg_store.py` share one contract — callers never change.
-- **Local by default, no API key.** `llm_providers.py` resolves the model from `MINDMORPH_LLM_PROVIDER`,
-  which defaults to a local [Ollama](https://ollama.com) install — `qwen2.5:7b` for interactive beats
-  (lesson generation, grading, tutor chat, orchestrator routing) and `qwen2.5:14b` for reasoning-heavy,
-  once-per-session work (skill-graph consensus, review, scout planning). Hosted providers are supported
-  as an opt-in fallback, not a requirement.
+- **Runs with no API key; goes fast when you give it one.** `config.get_chat_model` picks the backend
+  and `llm_providers.py` owns the failover. With no keys it is a local [Ollama](https://ollama.com)
+  install — `qwen2.5:7b` for interactive beats (lesson generation, grading, tutor chat, orchestrator
+  routing) and `qwen2.5:14b` for reasoning-heavy, once-per-session work (skill-graph consensus, review,
+  scout planning). Set `GROQ_API_KEYS` and hosted [Groq](https://groq.com) inference goes in front of
+  it: the keys are a pool, and a rate-limited (429), token-capped (413) or rejected (401) key rotates
+  to the next one mid-call. Exhaust the pool and it lands on local Ollama rather than failing. A
+  *permanent* error — above all a 404 model-not-found — is not rotated: it logs at ERROR and falls
+  back immediately, because every key would fail identically.
 - **MCP as a tool transport.** `tools/github_mcp_client.py` talks to MCP servers via
   `langchain-mcp-adapters`, with an explicit timeout wrapper in `tools/mcp_timeout.py` — a hung tool call
   can't stall a graph.
@@ -78,8 +82,9 @@ through the editor above.
 
 ## Run it in two minutes
 
-**No API key required.** The LLM is a local Ollama model — no vendor account, no key, no infra beyond
-Ollama itself, no Docker, no Postgres, no Alembic, no build step to start.
+**No API key required.** Out of the box the LLM is a local Ollama model — no vendor account, no key, no
+infra beyond Ollama itself, no Docker, no Postgres, no Alembic, no build step to start. Everything
+below works exactly as written with zero credentials.
 
 ```bash
 git clone https://github.com/tarunlnmiit/MindMorph_Learning_Platform.git
@@ -102,10 +107,34 @@ cd web && npm install && npm run dev
 Opens at `http://localhost:3000`. Sessions live in memory for the process lifetime; see below for the
 durable Postgres/RAG setup.
 
+### Optional: hosted inference, for when local is too slow
+
+Local inference is free but slow — a full skill-graph build takes minutes on `qwen2.5:14b`. If you want
+speed, put [Groq](https://console.groq.com/keys) in front of it. It stays optional: remove the keys and
+you are back on Ollama with no other change.
+
+```bash
+# .env — one or more free-tier keys, comma-separated. Rotation multiplies the per-key quota.
+GROQ_API_KEYS=gsk_yourfirstkey,gsk_yoursecondkey,gsk_yourthirdkey
+```
+
+That's the whole setup — the provider defaults to `groq` as soon as keys are present, and to `ollama`
+when they aren't. Measured on Groq via `scripts/live_smoke.py`: orchestrator routing `0.4–0.8s`, a
+seven-node skill-graph consensus build `2.8s`, first tutor token `1.0s`.
+
+Free-tier quota is metered **per key, per model** (for `openai/gpt-oss-120b`: 30 requests/min, 1K
+requests/day, 8K tokens/min, 200K tokens/day), which is why the pool exists — five keys is roughly 5x
+the headroom. Keep the model on the OpenAI OSS family; Groq has deprecated its Llama models.
+
 ### Configuration
 
 | Variable | Default | Purpose |
 |---|---|---|
+| `GROQ_API_KEYS` | unset | Comma-separated Groq key pool. Unset → local Ollama only, no key needed |
+| `MINDMORPH_LLM_PROVIDER` | `groq` if keys are set, else `ollama` | Primary backend |
+| `MINDMORPH_LLM_FALLBACK` | `ollama` | Where a Groq call lands when the pool is exhausted or misconfigured |
+| `MINDMORPH_GROQ_MODEL` | `openai/gpt-oss-120b` | Fast tier when Groq is active |
+| `MINDMORPH_GROQ_MODEL_COMPLEX` | `openai/gpt-oss-120b` | Quality tier when Groq is active |
 | `MINDMORPH_OLLAMA_MODEL` | `qwen2.5:7b` | Fast tier — interactive beats |
 | `MINDMORPH_OLLAMA_MODEL_COMPLEX` | `qwen2.5:14b` | Quality tier — reasoning-heavy, once-per-session work |
 | `MINDMORPH_OLLAMA_HOST` | `http://localhost:11434` | Ollama endpoint |
