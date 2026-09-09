@@ -24,7 +24,11 @@
   --color-mastered: oklch(78% 0.14 165);
   --color-progress: oklch(80% 0.13 80);
   --color-review: oklch(72% 0.17 25);
-  --color-blocked: oklch(55% 0.02 270);
+  /* Raised from 55% → 74% lightness: at 55% the "Locked" status text (11px) fell below WCAG AA
+     (~3.6:1 on the ink-850 surface, and further diluted by the locked card's opacity) — see
+     SkillGraph.tsx's `data.locked` opacity, raised from 0.45 → 0.7 alongside this. Still visibly the
+     dimmest/most muted of the status colors, just no longer illegible. */
+  --color-blocked: oklch(74% 0.02 270);
   --color-available: oklch(72% 0.1 270);
 
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;

@@ -25,6 +25,9 @@ export function CodeEditor({
           scrollBeyondLastLine: false,
           tabSize: 4,
           padding: { top: 12, bottom: 12 },
+          // Monaco's default accessible name is a generic "Editor content" — name it for what it
+          // actually is, since it's the only unlabelled control on the practice exercise.
+          ariaLabel: "Your solution",
         }}
       />
     </div>

@@ -29,6 +29,11 @@ export default function SessionPage() {
   const [gradeOutcome, setGradeOutcome] = useState<
     { nodeId: string; result: GradeResultT; newNodeCount: number } | null
   >(null);
+  // Announced through a single polite live region below — the meaningful state changes a screen
+  // reader user otherwise gets no signal for at all: lesson generation starting/finishing, a grade
+  // coming back, and the graph growing new prerequisite nodes (all of which change the page's
+  // structure without moving focus).
+  const [liveMessage, setLiveMessage] = useState("");
 
   const key = ["session", userId, sessionId];
 
@@ -49,6 +54,7 @@ export default function SessionPage() {
       setErrorMsg(null);
       // A freshly opened lesson carries a different exercise, so the previous grade no longer applies.
       setGradeOutcome(null);
+      setLiveMessage("Lesson ready.");
     },
     onError: (e) => {
       if (e instanceof LockedError) setLockMsg(`Locked — first complete: ${e.pending.join(", ")}`);
@@ -69,6 +75,15 @@ export default function SessionPage() {
         });
       }
       if (res.new_node_ids?.length) setRewireFocusIds(res.new_node_ids);
+      if (res.grade_result) {
+        const score = Math.round(res.grade_result.score ?? 0);
+        const grew = res.new_node_ids?.length ?? 0;
+        setLiveMessage(
+          `Graded: ${score}%.${
+            grew ? ` ${grew} new prerequisite ${grew === 1 ? "skill" : "skills"} added to the map.` : ""
+          }`,
+        );
+      }
     },
     onError: (e) => setErrorMsg(e.message),
   });
@@ -100,6 +115,13 @@ export default function SessionPage() {
 
   return (
     <main className="mx-auto max-w-7xl px-6 py-10 md:px-10">
+      {/* Mounted once, always present with a stable id — content generation (lesson compose), grading,
+          and graph growth (new prerequisite nodes) all change the page structurally with no focus
+          move, so a screen reader user otherwise gets no signal any of it happened. `polite` so it
+          never interrupts; kept terse, one line, replaced (not appended) so it never spams. */}
+      <div aria-live="polite" aria-atomic="true" className="sr-only">
+        {liveMessage}
+      </div>
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <button onClick={() => router.push("/")} className="text-sm text-text-muted hover:text-text">
@@ -157,11 +179,13 @@ export default function SessionPage() {
               );
               return;
             }
+            setLiveMessage("Composing lesson…");
             open.mutate(nodeId);
           }}
         />
         {lockMsg && (
           <p
+            role="alert"
             className="mt-3 rounded-lg border px-4 py-2 text-sm"
             style={{ color: "var(--color-blocked)", borderColor: "var(--color-blocked)" }}
           >
@@ -170,6 +194,7 @@ export default function SessionPage() {
         )}
         {errorMsg && (
           <p
+            role="alert"
             className="mt-3 rounded-lg border px-4 py-2 text-sm"
             style={{ color: "var(--color-review)", borderColor: "var(--color-review)" }}
           >

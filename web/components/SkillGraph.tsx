@@ -13,7 +13,7 @@ import {
 } from "@xyflow/react";
 import { useEffect, useMemo, useRef } from "react";
 import { layoutSkillGraph } from "@/lib/graphLayout";
-import { STATUS_STYLE, displayStatus, lockedNodeIds } from "@/lib/status";
+import { STATUS_STYLE, displayStatus, incompletePrereqLabels, lockedNodeIds } from "@/lib/status";
 import type { LearningSession, NodeStatus } from "@/lib/types";
 
 // Stagger window between two newly-inserted nodes' entrances, and the hand-off point from the
@@ -26,9 +26,17 @@ type SkillNodeData = {
   label: string;
   status: NodeStatus;
   locked: boolean;
+  // Non-empty only when `locked` — the unmet-prerequisite labels, so a screen reader user gets the
+  // reason instead of just "locked" (mirrors the sighted 🔒 + dimmed-card signal, which is otherwise
+  // colour/opacity-only).
+  lockedReason: string;
   selected: boolean;
   isNew: boolean;
   enterDelayMs: number;
+  // The latest `onOpen` from the owning SkillGraph instance, read (never written) inside the node's
+  // own keydown handler — a ref so the click-through path stays identical to mouse activation
+  // (`onNodeClick` below) without this node's `data` needing a fresh closure every render.
+  onOpenRef: { current: (nodeId: string, locked: boolean) => void };
 };
 
 // A custom node: surface card with a status dot + glow. Locked nodes are dimmed and non-interactive.
@@ -36,13 +44,21 @@ type SkillNodeData = {
 // `.react-flow__node` wrapper xyflow renders around it, which already carries its own position
 // transition (globals.css). `enterDelayMs` staggers multiple same-render insertions so they don't all
 // pop in on the same frame; the glow is chained to start right as the entrance settles.
-function SkillFlowNode({ data }: NodeProps<Node<SkillNodeData>>) {
+function SkillFlowNode({ id, data }: NodeProps<Node<SkillNodeData>>) {
   const style = STATUS_STYLE[data.status];
+  // Accessible name folds in status (and, if locked, the reason) so a screen reader user gets the
+  // same information the glyph + dimming + 🔒 convey visually — never a colour/opacity-only signal.
+  const accessibleName = `${data.label}. ${style.label}${data.locked && data.lockedReason ? `. Requires: ${data.lockedReason}` : ""}`;
+
   return (
     <div
-      className={`surface relative w-64 px-4 py-3 ${data.isNew ? "skill-node-enter" : ""}`}
+      className={`surface accent-ring relative w-64 px-4 py-3 ${data.isNew ? "skill-node-enter" : ""}`}
       style={{
-        opacity: data.locked ? 0.45 : 1,
+        // 0.7 (not the original 0.45): at 0.45 the locked label's already-muted colour composited
+        // against the ink surface fell below WCAG AA (~3:1) for its 11px size — see globals.css
+        // `--color-blocked`, raised alongside this so the pair clears 4.5:1 while staying visibly
+        // dimmed relative to an unlocked card.
+        opacity: data.locked ? 0.7 : 1,
         borderColor: data.selected ? "var(--color-gold)" : undefined,
         boxShadow: data.selected
           ? "0 0 0 1px var(--color-gold), 0 0 28px -6px var(--color-gold)"
@@ -53,6 +69,20 @@ function SkillFlowNode({ data }: NodeProps<Node<SkillNodeData>>) {
         ...(data.isNew
           ? { animationDelay: `${data.enterDelayMs}ms, ${data.enterDelayMs + ENTER_DURATION_MS}ms` }
           : null),
+      }}
+      // React Flow's own wrapper focus/keydown is disabled (`nodesFocusable={false}` below) because
+      // its Enter/Space handler only updates internal selection state, never this app's onNodeClick —
+      // a keyboard user could tab to a card and press Enter and nothing would happen. This element
+      // owns focus and activation itself instead; the mouse path (`onNodeClick` on <ReactFlow>) is
+      // untouched, so it stays exactly what the e2e suite exercises.
+      tabIndex={0}
+      role="button"
+      aria-label={accessibleName}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          data.onOpenRef.current(id, data.locked);
+        }
       }}
     >
       <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
@@ -101,6 +131,12 @@ export function SkillGraph({
   const seenEdgeKeys = useRef<Set<string>>(new Set());
   const containerRef = useRef<HTMLDivElement>(null);
   const rfInstanceRef = useRef<ReactFlowInstance<Node<SkillNodeData>, Edge> | null>(null);
+  // Read inside each card's keydown handler, written here after every render — keeps `onOpen`'s
+  // ever-changing identity (an inline arrow in the caller) out of the nodes/edges useMemo below.
+  const onOpenRef = useRef(onOpen);
+  useEffect(() => {
+    onOpenRef.current = onOpen;
+  }, [onOpen]);
 
   const { nodes, edges } = useMemo(() => {
     const graph = session.skill_graph;
@@ -127,9 +163,13 @@ export function SkillGraph({
           label: n.label,
           status: status[n.id] ?? "available",
           locked: locked.has(n.id),
+          lockedReason: locked.has(n.id)
+            ? incompletePrereqLabels(graph, session.node_state, n.id).join(", ")
+            : "",
           selected: session.selected_node === n.id,
           isNew: enterDelayByNode.has(n.id),
           enterDelayMs: enterDelayByNode.get(n.id) ?? 0,
+          onOpenRef,
         },
       };
     });
@@ -224,6 +264,11 @@ export function SkillGraph({
         nodesDraggable={false}
         nodesConnectable={false}
         edgesFocusable={false}
+        // React Flow's own node focus/keydown is Tab-reachable but Enter/Space only updates its
+        // internal selection state, never `onNodeClick` — a silent keyboard dead end. The card itself
+        // (SkillFlowNode) now owns tabIndex/role/aria-label/keydown, so this wrapper-level focus
+        // handling is turned off rather than stacking a second, non-functional tab stop per node.
+        nodesFocusable={false}
       >
         <Background color="oklch(40% 0.02 270 / 0.4)" gap={22} />
         <Controls showInteractive={false} />

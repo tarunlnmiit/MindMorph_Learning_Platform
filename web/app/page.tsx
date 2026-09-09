@@ -150,7 +150,7 @@ function Dashboard({ userId, onSignOut }: { userId: string; onSignOut: () => voi
           </button>
         </form>
         {createError && (
-          <p className="mt-3 text-sm" style={{ color: "var(--color-review)" }}>
+          <p role="alert" className="mt-3 text-sm" style={{ color: "var(--color-review)" }}>
             {createError}
           </p>
         )}
