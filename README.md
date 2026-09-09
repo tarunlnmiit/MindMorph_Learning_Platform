@@ -4,7 +4,9 @@
 
 A multi-agent learning platform built on LangGraph: 16 specialised agents compose into 6 graph workflows that research a topic, draft a personalised skill graph, teach each unit on demand, set exercises, grade your work, and grow the graph around whatever you actually got wrong.
 
-<!-- DEMO_GIF_PLACEHOLDER: drop a demo GIF/screen recording here -->
+![A learner's exercise scores 0%, locking the failed skill node while the graph grows two new gold remedial prerequisite nodes beside it](docs/media/rewire_hero.gif)
+
+A failing grade locks the node and grows two new prerequisite nodes ahead of it — the graph adapting to what the learner actually got wrong.
 
 Captured footage of the adaptive rewire in action: `docs/media/rewire_demo.mp4` (before/after stills:
 `rewire_before.png`, `rewire_after.png`).
