@@ -30,10 +30,17 @@ export function AssessmentQuiz({ quiz, submitting, onSubmit, onSkip }: Assessmen
       <ol className="mt-6 flex flex-col gap-6">
         {quiz.questions.map((q, qi) => (
           <li key={qi} className="rounded-xl border border-white/10 bg-ink-850 p-5">
-            <p className="font-medium text-text-strong">
+            <p id={`quiz-q${qi}`} className="font-medium text-text-strong">
               <span className="text-text-muted">{qi + 1}.</span> {q.question}
             </p>
-            <div className="mt-3 grid gap-2">
+            {/* role="group" + aria-labelledby ties each option button back to its question — without
+                it, tabbing option-to-option (rather than reading the whole card) lands on "toggle
+                button, not pressed" with no indication which question it's answering. Not a
+                role="radiogroup": APG requires arrow-key roving focus for that role, and these are Tab-
+                reachable individual buttons, so radiogroup here would be a keyboard-contract regression
+                rather than a fix. aria-pressed already exposes each option's selected state; buttons in
+                a titled group answering one question read as a single-choice set without it. */}
+            <div className="mt-3 grid gap-2" role="group" aria-labelledby={`quiz-q${qi}`}>
               {q.options.map((opt, oi) => {
                 const active = answers[qi] === oi;
                 return (

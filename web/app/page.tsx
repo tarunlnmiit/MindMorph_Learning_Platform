@@ -125,6 +125,12 @@ function Dashboard({ userId, onSignOut }: { userId: string; onSignOut: () => voi
       </header>
 
       <section className="surface mt-8 p-6">
+        {/* Screen-reader-only progress: stageLabel is otherwise visible text alone, so a screen reader
+            user gets nothing for the ~38s build. Stages arrive a few seconds apart (not token-rate), so
+            each one is announced — polite + atomic keeps it from interrupting typing elsewhere. */}
+        <div aria-live="polite" aria-atomic="true" className="sr-only">
+          {creating ? stageLabel ?? "Starting agents" : ""}
+        </div>
         <h2 className="text-xl font-semibold text-text-strong">Start a new path</h2>
         <form
           className="mt-4 flex flex-col gap-3 sm:flex-row"
@@ -155,7 +161,7 @@ function Dashboard({ userId, onSignOut }: { userId: string; onSignOut: () => voi
           </p>
         )}
         {createNotice && (
-          <div className="mt-3">
+          <div role="status" className="mt-3">
             <p className="eyebrow mb-1">Answered directly</p>
             <p className="text-sm text-text-muted">{createNotice}</p>
           </div>
