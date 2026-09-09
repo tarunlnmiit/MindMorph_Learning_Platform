@@ -148,6 +148,51 @@ test("remedial node added mid-session gets the entrance animation, even under St
   ).toHaveCount(0);
 });
 
+// React Flow's own node wrapper used to own focus, and its Enter/Space handler only mutated the
+// library's internal selection — it never reached onNodeClick, so a keyboard-only user got nothing.
+// The card now owns tabIndex/role/aria-label/keydown itself; these guard that path.
+async function openSession(page: Page) {
+  await page.addInitScript(() => localStorage.setItem("mindmorph.userId", "e2e@test.com"));
+  await page.goto("/session/sess1");
+  await expect(page.getByText("skills complete")).toBeVisible();
+}
+
+for (const key of ["Enter", "Space"]) {
+  test(`keyboard ${key} on an available node opens its lesson`, async ({ page }) => {
+    await mockApi(page);
+    await openSession(page);
+
+    await page.getByRole("button", { name: /^Python Basics\. Available$/ }).focus();
+    await page.keyboard.press(key);
+
+    // Same observable outcome the mouse test asserts, so the two paths are proven equivalent.
+    await expect(page.getByRole("heading", { name: "Python Basics", level: 1 })).toBeVisible();
+    await expect(page.getByText("Variables hold values.")).toBeVisible();
+  });
+}
+
+test("keyboard activation of a locked node surfaces the lock message", async ({ page }) => {
+  await mockApi(page);
+  await openSession(page);
+
+  await page.getByRole("button", { name: /^Data Structures\./ }).focus();
+  await page.keyboard.press("Enter");
+
+  await expect(page.getByText(/Locked — first complete: Python Basics/)).toBeVisible();
+});
+
+test("skill cards expose status (and the unmet prerequisite) in their accessible name", async ({
+  page,
+}) => {
+  await mockApi(page);
+  await openSession(page);
+
+  await expect(page.getByRole("button", { name: "Python Basics. Available" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Data Structures. Locked. Requires: Python Basics" }),
+  ).toBeVisible();
+});
+
 test("locked node shows a lock message", async ({ page }) => {
   await mockApi(page);
   await page.goto("/");
