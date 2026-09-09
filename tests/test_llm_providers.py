@@ -17,11 +17,13 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.append(ROOT)
 
+import groq
+import httpx
 from langchain_core.exceptions import OutputParserException
 from langchain_ollama import ChatOllama
 
 import config
-from llm_providers import PARSE_RETRIES, ProviderChain, _status_code
+from llm_providers import PARSE_RETRIES, TRANSPORT_RETRIES, ProviderChain, _status_code
 
 
 class _HttpError(Exception):
@@ -62,15 +64,18 @@ class _StubModel:
 class _StubStream:
     """Yields chunks, optionally raising after `fail_after` of them have been delivered."""
 
-    def __init__(self, name, chunks=None, fail_after=None, error=None):
+    def __init__(self, name, chunks=None, fail_after=None, error=None, fail_times=None):
         self.name = name
         self.chunks = chunks if chunks is not None else [f"from-{name}"]
         self.fail_after = fail_after
         self.error = error
+        self.fail_times = fail_times  # as in _StubModel: fail the leading N calls, then succeed
         self.calls = 0
 
     async def astream(self, prompt, **kwargs):
         self.calls += 1
+        if self.error is not None and self.fail_times is not None and self.calls > self.fail_times:
+            self.error = None
         for i, chunk in enumerate(self.chunks):
             if self.error is not None and self.fail_after == i:
                 raise self.error
@@ -181,7 +186,92 @@ def test_parse_failure_retries_on_the_async_path_too():
     assert k1.calls == PARSE_RETRIES + 1
 
 
-def test_non_parse_exception_without_status_is_still_permanent():
+# --- transport failures ------------------------------------------------------------------------
+# An APIConnectionError (and its APITimeoutError subclass) never reached the API, so it carries no
+# HTTP status — the old status-code rule read that as "permanent" and told the reader to go hunt a
+# deprecated model id. It is a socket/network blip: retry the SAME key (all keys share one host, and
+# the pool is built with max_retries=0 so nothing below us retries), then fall back.
+
+def _connection_error():
+    """A real groq.APIConnectionError — constructing one touches no network."""
+    return groq.APIConnectionError(request=httpx.Request("POST", "https://api.groq.com/v1/x"))
+
+
+def test_transport_failure_retries_the_same_key_and_can_succeed(caplog):
+    k1 = _StubModel("key1", error=_connection_error(), fail_times=TRANSPORT_RETRIES)
+    k2 = _StubModel("key2")
+    chain = ProviderChain([k1, k2], fallback=_StubModel("ollama"))
+
+    with caplog.at_level(logging.WARNING, logger="llm_providers"):
+        assert chain.invoke("hi") == "answer-from-key1"
+
+    assert k1.calls == TRANSPORT_RETRIES + 1, "the retries must land on the same key"
+    assert k2.calls == 0
+    assert "retrying the same key" in caplog.text
+    assert not any(rec.levelno >= logging.ERROR for rec in caplog.records), (
+        "a connection blip is not a config error and must not log at ERROR"
+    )
+    assert "deprecated" not in caplog.text, "must not send the reader hunting a model id"
+
+
+def test_transport_failure_does_not_take_the_permanent_branch(caplog):
+    # The captured-live bug: one connection error logged ERROR, blamed a 404 model id, and dropped
+    # straight to Ollama on the first attempt.
+    k1 = _StubModel("key1", error=_connection_error())  # fails every time
+    ollama = _StubModel("ollama")
+    chain = ProviderChain([k1], fallback=ollama)
+
+    with caplog.at_level(logging.DEBUG, logger="llm_providers"):
+        assert chain.invoke("hi") == "answer-from-ollama"
+
+    assert k1.calls == TRANSPORT_RETRIES + 1, "the key must not be abandoned after a single blip"
+    assert not any(rec.levelno >= logging.ERROR for rec in caplog.records)
+    assert "404" not in caplog.text and "model id" not in caplog.text
+
+
+def test_transport_failure_exhausted_falls_through_to_the_fallback(caplog):
+    k1 = _StubModel("key1", error=_connection_error())
+    k2 = _StubModel("key2")
+    ollama = _StubModel("ollama")
+    chain = ProviderChain([k1, k2], fallback=ollama)
+
+    with caplog.at_level(logging.WARNING, logger="llm_providers"):
+        assert chain.invoke("hi") == "answer-from-ollama"
+
+    assert k1.calls == TRANSPORT_RETRIES + 1
+    assert k2.calls == 0, "every key shares one host — rotating repeats the same socket failure"
+    assert ollama.calls == 1
+    assert "network or endpoint problem" in caplog.text
+
+
+def test_timeout_is_treated_as_a_transport_failure():
+    # APITimeoutError subclasses APIConnectionError, so the base class covers it.
+    err = groq.APITimeoutError(request=httpx.Request("POST", "https://api.groq.com/v1/x"))
+    k1 = _StubModel("key1", error=err, fail_times=TRANSPORT_RETRIES)
+    assert ProviderChain([k1], fallback=_StubModel("ollama")).invoke("hi") == "answer-from-key1"
+    assert k1.calls == TRANSPORT_RETRIES + 1
+
+
+def test_transport_failure_retries_on_the_async_path_too():
+    k1 = _StubModel("key1", error=_connection_error(), fail_times=TRANSPORT_RETRIES)
+    chain = ProviderChain([k1], fallback=_StubModel("ollama"))
+    assert asyncio.run(chain.ainvoke("hi")) == "answer-from-key1"
+    assert k1.calls == TRANSPORT_RETRIES + 1
+
+
+def test_stream_retries_the_same_key_when_the_socket_drops_before_the_first_token():
+    # Nothing has reached the learner yet, so re-entering the stream cannot duplicate text.
+    k1 = _StubStream("key1", chunks=["he", "llo"], fail_after=0,
+                     error=_connection_error(), fail_times=TRANSPORT_RETRIES)
+    k2 = _StubStream("key2", chunks=["wrong"])
+    chain = ProviderChain([k1, k2], fallback=_StubStream("ollama"))
+
+    assert _collect(chain.astream("hi")) == ["he", "llo"]
+    assert k1.calls == TRANSPORT_RETRIES + 1
+    assert k2.calls == 0
+
+
+def test_non_parse_exception_without_status_is_still_permanent(caplog):
     # The retry must NOT widen into "any unknown exception gets a second shot". A plain ValueError
     # is the sharp case: OutputParserException subclasses it, so this proves the check keys on the
     # specific class rather than the base.
@@ -190,9 +280,13 @@ def test_non_parse_exception_without_status_is_still_permanent():
     ollama = _StubModel("ollama")
     chain = ProviderChain([k1, k2], fallback=ollama)
 
-    assert chain.invoke("hi") == "answer-from-ollama"
+    with caplog.at_level(logging.ERROR, logger="llm_providers"):
+        assert chain.invoke("hi") == "answer-from-ollama"
     assert k1.calls == 1, "one shot only — no re-sample for a non-parse failure"
     assert k2.calls == 0
+    # Permanent, but with no status: the log must say that, not blame a model id.
+    assert "no HTTP status" in caplog.text
+    assert "404" not in caplog.text and "deprecated" not in caplog.text
 
 
 def test_exhausted_with_no_fallback_reraises_last_error():

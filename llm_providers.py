@@ -14,10 +14,19 @@ Three failure classes, deliberately treated differently:
   same model, so rotating is pointless — instead re-sample on the *same* member a bounded number of
   times. Before this existed, one bad Scout sample was misread as permanent and cost ~60s by
   abandoning the whole Groq pool for local Ollama.
+- **Transient / per-endpoint** — a transport failure (``APIConnectionError``, its ``APITimeoutError``
+  subclass, or a bare httpx transport error): the request never reached the API, so it carries no HTTP
+  status. Every key points at the same host, so rotating is pointless — retry the *same* member a
+  bounded number of times. The pool is built with ``max_retries=0``, so this layer is the only place a
+  dropped socket gets a second chance.
 - **Permanent / config** — above all 404 model-not-found. Every key will fail identically, so retrying
   across the pool just burns latency and hides the bug. This is the exact failure that silently
   degraded this project when Groq deprecated its Llama models, so it logs at ERROR and goes straight
   to the fallback.
+
+Absence of an HTTP status does NOT imply permanence — that rule is what made both the parse failure
+and the connection failure above masquerade as a deprecated model id. Permanence is the default only
+for exception classes nothing here recognises.
 
 Deliberately NOT a ``BaseChatModel`` subclass: the members already emit LangChain callbacks, so
 wrapping them in a chat model would fire ``on_llm_end`` twice and double-count in ``services.cost``.
@@ -45,8 +54,39 @@ PARSE_EXCEPTIONS = (OutputParserException, pydantic.ValidationError)
 PARSE_RETRIES = 1
 
 
+def _transport_exceptions() -> tuple:
+    """Transport-level failure classes that can reach this layer, if their packages are installed.
+
+    ``groq.APITimeoutError`` subclasses ``APIConnectionError``, so the base covers both. ``groq`` is
+    imported lazily by ``config`` (a checkout with no keys need not have it), so a missing package
+    must not break the import — it just means no SDK transport class exists to catch.
+    """
+    classes: list[type] = []
+    for module_name, attr in (("groq", "APIConnectionError"), ("httpx", "TransportError")):
+        try:
+            module = __import__(module_name)
+        except ImportError:
+            continue
+        cls = getattr(module, attr, None)
+        if isinstance(cls, type):
+            classes.append(cls)
+    return tuple(classes)
+
+
+TRANSPORT_EXCEPTIONS = _transport_exceptions()
+
+# Extra attempts on the same member after a transport failure. Not rotated: all keys share one host,
+# so a different key changes nothing. No sleep between attempts — the pool sets ``max_retries=0``, and
+# a dropped socket is retried, not waited out; the fallback covers a genuine outage.
+TRANSPORT_RETRIES = 2
+
+
 def _is_parse_failure(exc: Exception) -> bool:
     return isinstance(exc, PARSE_EXCEPTIONS)
+
+
+def _is_transport_failure(exc: Exception) -> bool:
+    return bool(TRANSPORT_EXCEPTIONS) and isinstance(exc, TRANSPORT_EXCEPTIONS)
 
 
 def _status_code(exc: Exception) -> Optional[int]:
@@ -90,14 +130,32 @@ class ProviderChain:
                 position, PARSE_RETRIES + 1, type(exc).__name__,
             )
             return False
+        if _is_transport_failure(exc):
+            # Retries already failed (see _invoke_member). The request never reached the API, and
+            # every key targets the same host, so rotating would repeat the same socket failure N
+            # times. Not a config error: WARNING, and no talk of model ids.
+            logger.warning(
+                "llm: %s could not reach the API after %d attempts (%s: %s) — network or endpoint "
+                "problem, not a key problem; falling back",
+                position, TRANSPORT_RETRIES + 1, type(exc).__name__, exc,
+            )
+            return False
         if code in ROTATE_STATUSES:
             logger.warning("llm: %s failed with HTTP %s (%s) — rotating to next key", position, code, type(exc).__name__)
             return True
+        if code == 404:
+            logger.error(
+                "llm: %s failed with HTTP 404 — NOT rotating, falling back. The model id is wrong "
+                "or deprecated; fix the config, the other keys will fail identically. (%s: %s)",
+                position, type(exc).__name__, exc,
+            )
+            return False
         logger.error(
-            "llm: %s failed permanently with HTTP %s — NOT rotating, falling back. "
-            "A 404 here means the model id is wrong or deprecated; fix the config, "
-            "the other keys will fail identically. (%s: %s)",
-            position, code, type(exc).__name__, exc,
+            "llm: %s failed with an unrecognised error (%s) — NOT rotating, falling back. "
+            "This is neither a known transient status nor a transport failure; if it turns out to be "
+            "retryable, classify it here rather than making every unknown error retryable. (%s: %s)",
+            position, f"HTTP {code}" if code is not None else "no HTTP status",
+            type(exc).__name__, exc,
         )
         return False
 
@@ -107,31 +165,40 @@ class ProviderChain:
             index + 1, len(self.primary), type(exc).__name__,
         )
 
-    def _invoke_member(self, index: int, args, kwargs):
-        """One member, with bounded same-member retries on a parse failure.
+    def _retry_same_member(self, index: int, exc: Exception, attempt: int) -> bool:
+        """Should this member be tried again for ``exc``? Logs the reason when it should."""
+        if _is_parse_failure(exc) and attempt < PARSE_RETRIES:
+            self._log_resample(index, exc)
+            return True
+        if _is_transport_failure(exc) and attempt < TRANSPORT_RETRIES:
+            logger.warning(
+                "llm: key %d/%d could not reach the API (%s) — retrying the same key",
+                index + 1, len(self.primary), type(exc).__name__,
+            )
+            return True
+        return False
 
-        No backoff between attempts: a parse failure carries no server-side rate state to wait out,
-        and a sleep would add latency to exactly the path this retry exists to keep fast.
+    def _invoke_member(self, index: int, args, kwargs):
+        """One member, with bounded same-member retries on a parse or transport failure.
+
+        No backoff between attempts: neither failure carries server-side rate state to wait out, and a
+        sleep would add latency to exactly the path these retries exist to keep fast.
         """
-        for attempt in range(PARSE_RETRIES + 1):
+        for attempt in range(max(PARSE_RETRIES, TRANSPORT_RETRIES) + 1):
             try:
                 return self.primary[index].invoke(*args, **kwargs)
-            except Exception as exc:  # noqa: BLE001 - re-raised unless it is a retryable parse failure
-                if attempt < PARSE_RETRIES and _is_parse_failure(exc):
-                    self._log_resample(index, exc)
-                    continue
-                raise
+            except Exception as exc:  # noqa: BLE001 - re-raised unless same-member retry applies
+                if not self._retry_same_member(index, exc, attempt):
+                    raise
 
     async def _ainvoke_member(self, index: int, args, kwargs):
         """Async twin of ``_invoke_member``."""
-        for attempt in range(PARSE_RETRIES + 1):
+        for attempt in range(max(PARSE_RETRIES, TRANSPORT_RETRIES) + 1):
             try:
                 return await self.primary[index].ainvoke(*args, **kwargs)
-            except Exception as exc:  # noqa: BLE001 - re-raised unless it is a retryable parse failure
-                if attempt < PARSE_RETRIES and _is_parse_failure(exc):
-                    self._log_resample(index, exc)
-                    continue
-                raise
+            except Exception as exc:  # noqa: BLE001 - re-raised unless same-member retry applies
+                if not self._retry_same_member(index, exc, attempt):
+                    raise
 
     def _fallback_or_raise(self, exc: Optional[Exception]):
         if self.fallback is None:
@@ -175,22 +242,28 @@ class ProviderChain:
         would duplicate text, so a mid-stream error propagates.
 
         No parse-retry here: only the tutor streams, and it streams plain text — nothing streamed is
-        a structured-output model, so there is no parse failure to re-sample.
+        a structured-output model, so there is no parse failure to re-sample. Transport retries *do*
+        apply: ``started`` is still False, so re-entering the stream cannot duplicate text.
         """
         last: Optional[Exception] = None
         for index, member in enumerate(self.primary):
             started = False
-            try:
-                async for chunk in member.astream(*args, **kwargs):
-                    started = True
-                    yield chunk
-                return
-            except Exception as exc:  # noqa: BLE001 - classified by status code below
-                if started:
-                    raise
-                last = exc
-                if not self._handle(index, exc):
-                    break
+            failure: Optional[Exception] = None
+            for attempt in range(TRANSPORT_RETRIES + 1):
+                try:
+                    async for chunk in member.astream(*args, **kwargs):
+                        started = True
+                        yield chunk
+                    return
+                except Exception as exc:  # noqa: BLE001 - classified by status code below
+                    if started:
+                        raise
+                    failure = exc
+                    if not self._retry_same_member(index, exc, attempt):
+                        break
+            last = failure
+            if not self._handle(index, failure):
+                break
         else:
             if self.primary:
                 logger.warning("llm: all %d keys exhausted — falling back", len(self.primary))
