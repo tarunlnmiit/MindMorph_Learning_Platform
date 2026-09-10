@@ -2,7 +2,7 @@
 
 **Online courses give everyone the same path. MindMorph builds a different one per learner, and won't let you move on until you've proven you understand.**
 
-A multi-agent learning platform built on LangGraph: 16 specialised agents compose into 6 graph workflows that research a topic, draft a personalised skill graph, teach each unit on demand, set exercises, grade your work, and grow the graph around whatever you actually got wrong.
+A multi-agent learning platform built on LangGraph: 16 specialised agents compose into 4 graph workflows that research a topic, draft a personalised skill graph, teach each unit on demand, set exercises, grade your work, and grow the graph around whatever you actually got wrong.
 
 ![A learner's exercise scores 0%, locking the failed skill node while the graph grows two new gold remedial prerequisite nodes beside it](docs/media/rewire_hero.gif)
 
@@ -51,8 +51,10 @@ recomputed on every read from the graph plus mastery state (`services/completion
 out of sync.
 
 **Code is graded live, in the browser.** A Monaco editor (`web/components/CodeEditor.tsx`) collects the
-submission, `tools/code_executor.py` runs its unit tests in a sandboxed subprocess, and the Reviewer
-agent critiques the result — no copy-pasting into a separate terminal. Non-Python exercises and case
+submission, `tools/code_executor.py` runs its unit tests in a subprocess with a wall-clock timeout and
+a secret-scrubbed environment, and the Reviewer agent critiques the result — no copy-pasting into a
+separate terminal. That subprocess is a hang-guard for a local single-user prototype, **not a security
+sandbox**; real isolation is a hosted-deployment item. Non-Python exercises and case
 studies fall back to LLM rubric grading. A separate, optional in-browser JupyterLite scratchpad
 (`web/components/Sandbox.tsx`) is for free experimentation only — the graded submission always goes
 through the editor above.
@@ -60,8 +62,9 @@ through the editor above.
 ## Architecture notes
 
 - **16 agents, one composition layer.** Agents in `agents/` are single-responsibility and know nothing
-  about each other; `graph/` wires them into 6 workflows. Adding a teaching strategy means adding a
-  graph, not editing an agent.
+  about each other; `graph/` wires them into 4 `StateGraph` workflows (learning plan, lesson, content,
+  exercise), plus the skill-graph renderer and the additive-merge half of adaptation described above.
+  Adding a teaching strategy means adding a graph, not editing an agent.
 - **The vector store is deliberately swappable.** Default is `InMemoryVectorStore` with local `fastembed`
   embeddings, so the platform runs with no vector-DB account and no embedding API cost. Set
   `MINDMORPH_STORE=postgres` and the same interface persists to pgvector. `rag/store.py` and
@@ -140,7 +143,7 @@ the headroom. Keep the model on the OpenAI OSS family; Groq has deprecated its L
 | `MINDMORPH_OLLAMA_MODEL` | `qwen2.5:7b` | Fast tier — interactive beats |
 | `MINDMORPH_OLLAMA_MODEL_COMPLEX` | `qwen2.5:14b` | Quality tier — reasoning-heavy, once-per-session work |
 | `MINDMORPH_OLLAMA_HOST` | `http://localhost:11434` | Ollama endpoint |
-| `MINDMORPH_STORE` | `memory` | `memory` for zero-infra dev, `postgres` for the durable store |
+| `MINDMORPH_STORE` | `postgres` | Set to `memory` for zero-infra dev (as the quickstart does); the unset default is the durable Postgres store |
 | `DATABASE_URL` | `postgresql+psycopg://mindmorph:mindmorph@localhost:5432/mindmorph` | Matches `docker-compose.yml`, used when `MINDMORPH_STORE=postgres` |
 | `MINDMORPH_RAG` | off | Toggles knowledge-base retrieval grounding |
 | `MINDMORPH_KNOWLEDGE_DIR` | `knowledge_base/` | Corpus loaded into the vector store at startup |
@@ -166,10 +169,10 @@ MINDMORPH_STORE=memory conda run -n mindmorph python -m pytest tests/ -q
 | Path | What lives there |
 |---|---|
 | `agents/` | 16 single-responsibility agents — orchestrator, scout, academic, market, practical, consensus, reviewer, tutor, assessment, exercise, adaptation, content_generator, example_generator, visual_generator, synthesizer, factual |
-| `graph/` | 6 LangGraph workflows composing those agents |
+| `graph/` | 4 LangGraph workflows composing those agents, plus the skill-graph renderer and the adaptation merge |
 | `rag/` | Embeddings, chunking, in-memory and pgvector stores |
 | `services/` | Mastery scoring, completion, learning-service orchestration |
-| `tools/` | Sandboxed code executor, MCP client, scrapers |
+| `tools/` | Timeout-guarded code executor, MCP client, scrapers |
 | `api/` | FastAPI layer |
 | `persistence/` | SQLAlchemy models |
 | `web/` | Next.js frontend — Monaco editor, JupyterLite scratchpad |

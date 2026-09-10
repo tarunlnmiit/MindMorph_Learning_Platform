@@ -28,8 +28,9 @@ The repo is a **working multi-agent prototype** with **P0-P1 complete**: the Lea
 the dual-path Content DAG (creative + live web grounding → synthesizer), the Exercise DAG + live
 grading, and the FastAPI + Postgres backend all run end-to-end. CrewAI is a non-goal — parallel
 LangGraph nodes already cover the concurrency it would add. Still open: multi-vendor LLM routing
-beyond the current Groq-pool → local-Ollama chain, and the infra/observability layers
-(see roadmap below).
+beyond the current Groq-pool → local-Ollama chain, and the infra layer. Observability is partial —
+token/cost accounting and wall-clock stage spans are recorded in-process and ride the session payload,
+but nothing exports them to a metrics backend (see roadmap below).
 
 ---
 
@@ -40,10 +41,10 @@ beyond the current Groq-pool → local-Ollama chain, and the infra/observability
 | Orchestrator Agent (route SCOUT/CONTENT/EXERCISE) | ✅ | `agents/orchestrator/orchestrator_agent.py` | Structured output; routes inside the LangGraph graph (`graph/learning_plan_graph.py`). SCOUT, CONTENT and EXERCISE all wired to real nodes; only an unrecognized route hits the placeholder. |
 | Scout Agent (decompose → Academic/Market/Practical queries) | ✅ | `agents/scout/scout_agent.py` | Returns `ScoutOutputSchema`; "Query" and "Prompt" variants. |
 | Academic Agent (check university curricula) | ✅ | `agents/academic/academic_agent.py` | Real agent + `prompts/academic_prompt.py` (university-curriculum framing). Replaced the old inline `llm.invoke`. |
-| Market Agent (scan job postings) | ✅ | `agents/market/market_agent.py` + `tools/job_scrapper_tool.py` | Apify LinkedIn MCP scrape + LLM summarize; runs as a graph node (degrades to None on empty scrape). |
-| Practical Agent (find GitHub projects) | ✅ | `agents/practical/practical_agent.py` | GitHub MCP wired in (`tools/github_mcp_client.py` `search_github_repositories` now returns results); folded into the practical prompt. |
-| Consensus Agent (combine findings → skill graph) | ✅ | `agents/consensus/consensus_agent.py` | Structured `SkillGraph` (nodes/edges); fan-in node after the three specialists. |
-| Reviewer Agent (quality/coherence) | ✅ | `agents/reviewer/reviewer_agent.py` | Structured `ReviewResult` (passed + notes). No retry loop yet (P0 stopping point). |
+| Market Agent (scan job postings) | ✅ | `agents/market/market_agent.py` + `tools/job_scrapper_tool.py` | Apify LinkedIn MCP scrape + LLM summarize; runs as a graph node (degrades to None on empty scrape). Losing MARKET grounding now logs a WARNING at the consensus fan-in (`consensus_node`) — a degraded skill graph is no longer indistinguishable from a grounded one. The MCP handshake (~4.3s) is cached on the per-process `JobScraperService` and reset on any failure, so a wedged client can't persist. |
+| Practical Agent (find GitHub projects) | ✅ | `agents/practical/practical_agent.py` | GitHub MCP wired in (`tools/github_mcp_client.py` `search_github_repositories` now returns results); folded into the practical prompt. Every way of returning None (no token / empty result / exception) logs its reason at WARNING. Scout prose is normalised to a bounded keyword query by `to_search_query` before it reaches GitHub's `q` (empirical 200-char cap, ≤6 terms — the documented limit is 256 but shorter queries were observed rejected). |
+| Consensus Agent (combine findings → skill graph) | ✅ | `agents/consensus/consensus_agent.py` | Structured `SkillGraph` (nodes/edges); fan-in node after the three specialists. Runs `prune_dangling_edges` on the result **before** the Mermaid render and before the Reviewer, so the persisted graph, the diagram and the review all see one coherent artifact; dropped edges log at WARNING. |
+| Reviewer Agent (quality/coherence) | ✅ | `agents/reviewer/reviewer_agent.py` | Structured `ReviewResult` (passed + notes). A failing or null verdict now logs loudly at WARNING (`reviewer_node`) instead of riding silently in the payload — but still **no retry loop and no consumer acts on the verdict**; the session is served either way. The one deterministically repairable failure (dangling edges) is fixed upstream in `consensus_node`; everything else needs a human. |
 | Final Learning Plan (skill dependency graph) | ✅ | `graph/skill_graph_render.py` | Skill Dependency Graph artifact: JSON + deterministic Mermaid; rendered in the app. |
 
 ## 3. Status by Agent (Content-Generation DAG)
@@ -76,7 +77,7 @@ beyond the current Groq-pool → local-Ollama chain, and the infra/observability
 | Data | 🟡 | **PostgreSQL** ✅ — learning sessions (JSONB, #6) + per-user RAG vectors (**pgvector**, #9). Still **no** Redis/S3/Kafka. |
 | Infrastructure | ⛔ | No K8s/Terraform/Prometheus/CI-CD. |
 | Analytics & Continuous Improvement | ⛔ | No telemetry pipeline, warehouse, or human-review loop. |
-| LLM Ops & Production | 🟡 | Provider chain (Groq pool → Ollama) ✅ + content-groundedness eval ✅ (`evals/`) + **token/cost accounting** 🟡 (`services/cost.py` `TokenMeter`, priced per model, on the lesson-compose path only — see Cross-cutting). Still **no** latency observability or deployment pipeline. |
+| LLM Ops & Production | 🟡 | Provider chain (Groq pool → Ollama) ✅ + content-groundedness eval ✅ (`evals/`) + **token/cost accounting** 🟡 (`services/cost.py` `TokenMeter`, priced per model, on the lesson-compose path only — see Cross-cutting) + **latency observability** 🟡 (`services/timing.py` wall-clock spans on the graph / lesson / grade paths — log lines plus a dict on the session payload; no metrics backend or exporter, see Cross-cutting). Still **no** deployment pipeline. |
 | Security & Governance | ⛔ | No auth/RBAC/encryption/PII scrubbing. Only `.env` secrets + `.gitignore`. |
 
 ## 6. Supporting components
@@ -85,12 +86,12 @@ beyond the current Groq-pool → local-Ollama chain, and the infra/observability
 |---|---|---|---|
 | Prompt Registry wrapper (LangSmith) | ✅ | `prompts/prompt_registry_wrapper_method.py` | `setup_agent_prompt()` reused by all agents; optional LangSmith push. |
 | Job scraper tool (Apify MCP) | ✅ | `tools/job_scrapper_tool.py` | `JobScraperService` — LinkedIn search + parse. |
-| GitHub MCP client | ✅ | `tools/github_mcp_client.py` | `search_github_repositories` returns results; wired into the Practical node (degrades to None without a token). |
+| GitHub MCP client | ✅ | `tools/github_mcp_client.py` | `search_github_repositories` returns results; wired into the Practical node (degrades to None without a token, and says which failure it was at WARNING). `to_search_query` folds typographic punctuation, strips stopwords and bounds the query (≤6 terms, ≤200 chars) so prose can't trip GitHub's `q` length limit. |
 | Web search (DuckDuckGo) | ✅ | `agents/factual/factual_agent.py` | `ddgs` live search for the Content Factual path. |
 | Skill graph renderer | ✅ | `graph/skill_graph_render.py` | Deterministic SkillGraph JSON → Mermaid. |
 | LLM config | ✅ | `config.py` | Groq `openai/gpt-oss-120b` / local Ollama `qwen2.5:7b`\|`:14b`, temp 0.1. `GROQ_API_KEYS` (comma-separated pool) is optional and validated nowhere — absent/empty simply selects the Ollama path. |
 | Next.js frontend | ✅ | `web/` | SCOUT skill-graph + CONTENT dual-path, Mermaid render, lesson view, grading. Legacy Streamlit `app.py` **retired** (P3 #12) — it no longer exists in the repo. |
-| Tests | 🟡 | `tests/` | 229 passed, 3 skipped across 27 files (graph routing/fan-in, content dual-path, skill-graph render, RAG/ingestion/pgvector, assessment, tutor chat, provider-chain rotation/fallback, cost/usage, funnel events, import guards). |
+| Tests | 🟡 | `tests/`, `web/tests/` | pytest: 268 passed, 3 skipped across 30 files (graph routing/fan-in, content dual-path, skill-graph render + dangling-edge prune, RAG/ingestion/pgvector, assessment, tutor chat, provider-chain rotation/fallback, cost/usage, stage timing, GitHub query normalisation, funnel events, import guards). Playwright: 30 passed across 5 specs (mocked-API E2E loop + lock gate, dagre layout/camera framing, Mermaid sanitise + containment, lock-message labels). |
 
 ---
 
@@ -225,9 +226,11 @@ Each item notes the **architecture section** it satisfies and the **code gap** i
     *Satisfies:* §5.5, §5.6, §5.8.
 
 ### Cross-cutting
-- 🟡 **Test suite** — pytest (`tests/`, 229 passed, 3 skipped: graph routing/fan-in, content dual-path, skill-graph
-  render, RAG/ingestion/pgvector, assessment, tutor chat, provider-chain rotation/fallback, cost/usage
-  accounting, funnel events, import guards). Growing.
+- 🟡 **Test suite** — pytest (`tests/`, 268 passed, 3 skipped: graph routing/fan-in, content dual-path, skill-graph
+  render + dangling-edge prune, RAG/ingestion/pgvector, assessment, tutor chat, provider-chain rotation/fallback,
+  cost/usage accounting, stage timing, GitHub query normalisation, funnel events, import guards) plus Playwright
+  (`web/tests/`, 30 passed: mocked-API E2E loop + lock gate, dagre layout/camera framing, Mermaid sanitise +
+  containment, lock-message labels). Growing.
 - 🟡 **Funnel instrumentation (Gate-1)** — `services/events.py` appends a structured event to an
   append-only `learning_session["events"]` timeline at every loop chokepoint (`session_created`,
   `assessment_submitted`, `lesson_opened`, `exercise_graded`, `node_mastered`/`needs_review`,
@@ -249,6 +252,29 @@ Each item notes the **architecture section** it satisfies and the **code gap** i
   (an earlier note said $0.005; that predates the current `MODEL_PRICES` and doesn't reconcile). Pairs with the
   already-durable per-`node_id` lesson cache — together the two halves of the "$/active-user" hard
   gate. *Deferred:* DAG/assessment/tutor cost, per-user aggregation, dashboards.
+- 🟡 **Latency observability (where the time goes)** — `services/timing.py`: one `span()` records a
+  wall-clock stage into a `ContextVar` collector and always emits a `timing: <stage> <ms> ms` log line, so
+  it works with no collector attached. Instrumented at the LLM-backed chokepoints — `graph.orchestrator`
+  / `graph.scout` / `graph.academic` / `graph.market` / `graph.practical` / `graph.consensus` /
+  `graph.reviewer` (plus the four `market.apify.*` / `market.llm.*` sub-spans),
+  `lesson.content` / `lesson.exercise`, and the grade exec + `grade.adapt`. Each span carries a
+  `start_ms` offset from the collector origin, so the specialist fan-out can be *seen* to overlap rather
+  than inferred from durations. Surfaced on `learning_session["timing"]` (`graph`, `grade`) and per-lesson
+  `lessons[node_id]["timing"]`, riding the JSONB blob beside `usage`. Replaces the throwaway monkeypatch
+  harness every previous performance question needed. *Deferred:* no exporter, no metrics backend, no
+  dashboards; DAG/assessment/tutor token-level latency is not broken out.
+- ✅ **Graph integrity — one invariant, enforced in three lanes.** An edge naming a node id that does not
+  exist (an LLM hallucination — the observed case was Consensus emitting `mlops_tools`) becomes an
+  unmasterable prerequisite: its dependants lock forever and `is_session_complete` can never fire.
+  `graph/skill_graph_adapt.prune_dangling_edges` is the single implementation, applied at **build time**
+  in `consensus_node` (before the Mermaid render and before the Reviewer), at **read time** in
+  `services/completion.prereqs_by_node` (the sole leak point every consumer routes through), and mirrored
+  in TypeScript by `web/lib/status.ts` `prereqsByNode` so the raw slug can't reach the lock message or a
+  card's accessible name. The read-time guard is what rescues sessions **already persisted** with a
+  phantom: nothing stored is rewritten and the stored edge list stays byte-identical, so there is no
+  migration — such a session simply becomes finishable on next read. Read-time drops log at WARNING,
+  deduped per shape (the derivation runs several times per request). `node_state` keys are deliberately
+  *not* filtered — `apply_adaptation` is additive-only, so a stale id there is an impossible state.
 - 🟡 **Eval pipeline** — `evals/`: offline **content-groundedness LLM-judge** (`python -m evals.run`,
   `--calibrate` validates the judge discriminates contradiction vs extra-but-correct). Judges precision
   (contradiction of curated source facts), not coverage. De-risks the Gate-2 "content trust" hard gate.

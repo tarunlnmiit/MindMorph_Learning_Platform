@@ -46,7 +46,12 @@ Real authentication (the email field on the login gate is MVP identity only — 
 session token, no account records), multi-**vendor** model routing (GPT / Claude / Gemini / Bedrock —
 the two backends that do exist, Groq and Ollama, are in scope), Redis / S3 / Kafka, containerized
 grading sandbox, real dataset ingestion (dataset exercises return links), deployment / CI / K8s,
-telemetry and observability pipelines. See `docs/IMPLEMENTATION_STATUS.md` for the full roadmap.
+telemetry **pipelines** — no metrics backend, exporter or dashboard exists. Note the narrower carve-out:
+per-stage token/cost accounting and wall-clock latency spans *are* recorded in-process (`services/cost.py`,
+`services/timing.py`), log as `timing: <stage> <ms> ms`, and ride the session payload
+(`learning_session.timing`, `lessons.<node>.timing`) — so a **missing or empty** `timing` block on a
+completed graph build or lesson compose **is** in scope. See `docs/IMPLEMENTATION_STATUS.md` for the full
+roadmap.
 
 ---
 
@@ -138,7 +143,7 @@ Severity guide: **Critical** (blocks core flow / data loss) · **High** (feature
 | A2 | Launch with keys | Set `GROQ_API_KEYS` to one or more valid keys, launch, run the same CONTENT query | http://localhost:3000 shows the login gate — headline **"Click a skill. Learn it. Prove it."** and one email field (`web/app/page.tsx`); after signing in, the query answers **noticeably faster** than A1; no `llm:` warnings in the logs | Critical |
 | A5 | Key rotation on a bad key | Set `GROQ_API_KEYS=bad1,bad2,<valid key>` (invalid keys → HTTP 401, a rotate status), launch, run any query | Logs show `llm: key 1/3 failed with HTTP 401 … rotating to next key`, then key 2/3, then the answer returns from key 3. **UI result is normal** — rotation is invisible to the learner. With no valid key in the pool, logs instead show `llm: all N keys exhausted — falling back` and the answer still arrives (from Ollama) | High |
 | A6 | Bad model id fails loudly, once | Set `MINDMORPH_GROQ_MODEL=openai/does-not-exist` with a valid `GROQ_API_KEYS` pool, launch, run any query | Logs show **one** `llm: key 1/N failed permanently with HTTP 404 — NOT rotating, falling back` at **ERROR** level; the other keys are **not** tried. The answer still returns via Ollama (slower). A 404 that rotates through the pool, or degrades with **no** ERROR line, is the defect | High |
-| A3 | Automated suite | Run `pytest -q` | All tests pass (**232 collected** at time of writing); no failures or errors | High |
+| A3 | Automated suite | Run `pytest -q` | All tests pass (**268 passed, 3 skipped** at time of writing — the skips are DB-gated); no failures or errors. The frontend suite is separate: `cd web && npx playwright test` → **30 passed** | High |
 | A4 | Sign out / sign back in | With a path open, go **← All paths** → click **`<email>` · sign out** (dashboard header), then sign in again with the same email | Sign-out returns to the login gate with no crash; signing back in lists the same path under **Your paths** with **Resume →**, and resuming restores the graph and mastery. (There is no agent re-initialize control — persistence replaced it) | Medium |
 
 ### Suite B — SCOUT route (skill roadmap)
@@ -170,9 +175,11 @@ Precondition: a roadmap is generated (Suite B).
 | C14 | Prerequisite-gated completion | Fail a node (→ spawns a remedial **prerequisite**), then **master that same node** while the new prerequisite is untouched | Node shows **🔒 Locked** (passed its own exercise but a prerequisite is incomplete), **not** ✓ Complete; the `N/M` count does not include it. Then master the prerequisite → the node flips to **✓ Complete** and the count increments | High |
 | C15 | Locked lesson not openable | Click a node card rendered **dimmed** with the **🔒 Locked** status (a prerequisite isn't complete) | No lesson opens; a message **"🔒 Locked — first complete: \<prerequisite names\>"** appears under the graph. A node downstream of a locked node is also locked. The gate is enforced server-side too (`POST …/lessons/<id>` → 409) | High |
 | C16 | Unlock on prerequisite completion | Master the prerequisite(s) named in C15, then click the previously-locked node | The card is no longer dimmed or Locked; the lesson opens normally | Medium |
+| C17 | Broken stored graph is rescued, not rewritten | Needs a hand-crafted session (`MINDMORPH_STORE=postgres`, edit the JSONB row's `skill_graph.edges` to add `{"source":"ghost_skill","target":"<a real node id>"}` — `ghost_skill` must not exist in `nodes[]`). Reload the session in the UI, master that node and its real prerequisites | The node is **not** permanently locked by the phantom: it grades, completes, and the `N/M` counter can reach the full count. The lock message and the card's accessible name name only **real** prerequisite labels — the raw slug `ghost_skill` must never appear on screen. `logs/mindmorph.log` carries one WARNING per distinct dangling-edge shape (deduped, not once per read). Re-reading the row shows the injected edge **still present and byte-identical** — the guard is read-time only and rewrites nothing (`services/completion.prereqs_by_node`) | High |
 | C7 | Grade — WRONG | On an **unmastered** node, submit a failing solution (Appendix A) | `0%` and `0/N tests passed` in red; the graph camera pans to the change; the node's raw `status` becomes `needs_review` but it **displays as 🔒 Locked** (a sub-40 grade sets `remediation_pending`, which locks it until the new prerequisites are cleared); a **new remedial node** animates in with an edge pointing **into** the failed node, and a **Graded** card replaces the lesson panel saying how many prerequisite skills were added | Critical |
 | C8 | Score-aware regeneration | After C7, master the remedial prerequisite(s) so the failed node unlocks, then click it again | Lesson **regenerates** ("Composing lesson…", i.e. a cache MISS — the failing grade dropped the cached lesson) and the new content addresses the recorded `weaknesses`. Backend log: `ContentAgent: generating … (remediation=True)`. Do not assert on exact headings — the wording is LLM-generated | High |
 | C9 | Open remedial node | Click the newly-added remedial node | A lesson for that prerequisite sub-skill renders | Medium |
+| C18 | Malformed diagram degrades quietly | Open lessons until one contains a Mermaid diagram (§6.3 visual generator). If the generated source is malformed, or you force it by editing the cached `lessons.<node>.content` | A failed diagram falls back to the raw code block and the rest of the lesson renders. Crucially, **no stray "Syntax error" bomb graphic is left on the page** — not after the fallback, and not after navigating away (`suppressErrorRendering` + artifact cleanup, `web/components/MermaidDiagram.tsx`). A leftover diagram surviving unmount is the defect | Low |
 | C10 | Grade — PARTIAL | On an **unmastered** node, submit a partially-correct solution (Appendix A), tuned to 40–79% | Mixed result (e.g. `3/5 — 60%`); node turns **◐ Keep practicing**; no remedial node, no lock | High |
 | C11 | Sticky mastery | On a node already **✓ Complete**, submit a wrong solution | Node **stays ✓ Complete** (mastery is sticky); `best_score` unchanged in the payload; `attempts` increments | High |
 | C12 | Stale panel cleared | Fail a node (C7), reopen it (new exercise generated) | The old grade result is **gone** — the freshly opened lesson does not show a result from the previous exercise | Medium |
@@ -209,6 +216,7 @@ Reminder (§4): CONTENT never creates a path, so its lesson is in the response p
 |---|---|---|---|---|
 | G1 | Grade empty solution | Leave the editor empty (or whitespace-only) | **Grade my submission** is **disabled** (greyed) and cannot be clicked, so no grading runs (`web/components/LessonPanel.tsx`) | Medium |
 | G2 | Missing function name | Submit code that doesn't define the required name | Graded as a failure (e.g. `0/0` / collect error), no crash | Medium |
+| G6 | No filesystem path in grade feedback | Reproduce G2 (its `ImportError` is the message that carries the path), then read the failure text in the result panel **and** the grade response's `failures[]` / `stdout` | The useful part survives (e.g. *"cannot import name 'x' from 'solution'"*) but **no absolute path appears** in either field — no `/private/var/…`, no `/var/folders/…`, no `mindmorph_grade_…` temp dir. `_strip_sandbox_paths` (`tools/code_executor.py`) relativises them to bare filenames once on the raw child output, before parsing and before the `[-4000:]` slice, so every derived field inherits it. A leaked path is the defect | Medium |
 | G3 | Infinite loop guard | Submit a coding solution with `while True: pass` | Grading **times out** at 10s (`DEFAULT_TIMEOUT_SECONDS`, `tools/code_executor.py`) and the result panel reports "Execution timed out (possible infinite loop)." — UI does not hang | High |
 | G4 | Long session | Generate roadmap, open many nodes, grade several | No memory/state corruption; mastery and graph stay consistent | Medium |
 | G5 | Factual arm degradation | (If web search errors in logs) | Lesson still generates from the creative draft; no hard failure | Low |
@@ -226,6 +234,19 @@ Reminder (§4): CONTENT never creates a path, so its lesson is in the response p
   `llm: all N keys exhausted — falling back` (WARNING), `llm: key N/M failed permanently with HTTP 404
   — NOT rotating, falling back` (ERROR). No secrets (API keys) should ever appear in logs — key
   positions are logged as `key 2/3`, never the key value.
+- **Latency lines:** every LLM-backed stage emits `timing: <stage> <ms> ms` — `graph.orchestrator`,
+  `graph.scout`, the three specialists, `graph.consensus`, `graph.reviewer`, `graph.total`,
+  `lesson.content`, `lesson.exercise`, `lesson.total`, and the grade spans. These are informational; a
+  *missing* line for a stage that demonstrably ran is the defect, not a slow one.
+- **Degraded-grounding lines (new — these are expected, not defects).** The pipeline used to fail open
+  silently; each degradation now says so at WARNING. Seeing one means that arm was unavailable, which is
+  usually just a missing optional token: `Consensus degraded: no MARKET grounding for …` (no
+  `APIFY_API_TOKEN`, or the scrape returned nothing); `GitHub grounding unavailable:
+  GITHUB_PERSONAL_TOKEN is not set` / `GitHub grounding empty: no repositories returned for …`;
+  `Consensus graph incoherent for …: dropped N edge(s) referencing unknown node ids: …`;
+  `Reviewer REJECTED the skill graph for … (serving it anyway): …`. The **absence** of any such line on a
+  visibly incomplete result is the more interesting defect. Note the last two: a rejected review does
+  **not** block the session (there is no retry loop), and a dropped dangling edge is a deliberate repair.
 - **Security note (do not "fix" as a bug):** code grading runs the learner's Python in a subprocess
   with a wall-clock timeout and secret-scrubbed env. It is a **hang-guard for a local single-user
   prototype, not a security sandbox** (documented in `tools/code_executor.py`). Real isolation is a
