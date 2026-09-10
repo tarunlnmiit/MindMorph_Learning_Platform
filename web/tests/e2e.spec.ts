@@ -91,7 +91,11 @@ test("full loop: login → graph → lesson → grade → mastery", async ({ pag
   await page.getByLabel("What do you want to learn?").fill("Learn Python");
   await page.getByRole("button", { name: "Generate" }).click();
 
-  // Lands on the session page; the mastery counter starts at 0/2.
+  // Lands on the session page. This is a client-side router.push into /session/[id], and the dev
+  // server compiles that route on demand the first time any test reaches it — measured at ~12s cold
+  // vs ~0.5s warm. The other tests enter via page.goto(), whose 30s navigation timeout absorbs that;
+  // this one has to wait for the transition explicitly, or the 5s expect() default fires mid-compile.
+  await page.waitForURL("**/session/**");
   await expect(page.getByText("skills complete")).toBeVisible();
   await expect(page.getByText("/2")).toBeVisible();
 
@@ -200,6 +204,8 @@ test("locked node shows a lock message", async ({ page }) => {
   await page.getByRole("button", { name: "Enter" }).click();
   await page.getByLabel("What do you want to learn?").fill("Learn Python");
   await page.getByRole("button", { name: "Generate" }).click();
+  // Same cold-compile wait as the full-loop test — see the comment there.
+  await page.waitForURL("**/session/**");
   await expect(page.getByText("skills complete")).toBeVisible();
 
   // 'Data Structures' is locked behind 'Python Basics'.
