@@ -12,7 +12,15 @@ import {
   type ReactFlowInstance,
 } from "@xyflow/react";
 import { useEffect, useMemo, useRef } from "react";
-import { layoutSkillGraph } from "@/lib/graphLayout";
+import {
+  FOCUS_PADDING_X,
+  FOCUS_PADDING_Y,
+  focusFrameIds,
+  layoutSkillGraph,
+  NODE_HEIGHT,
+  NODE_WIDTH,
+  type NodeBox,
+} from "@/lib/graphLayout";
 import { STATUS_STYLE, displayStatus, incompletePrereqLabels, lockedNodeIds } from "@/lib/status";
 import type { LearningSession, NodeStatus } from "@/lib/types";
 
@@ -213,26 +221,34 @@ export function SkillGraph({
 
     const instance = rfInstanceRef.current;
     if (!instance) return;
-    // Two hops of neighbours, not one: one hop framed as few as three cards, which the maxZoom cap
-    // then centred in empty canvas — the rewire read as "three cards" rather than "the map changed".
-    // Each round works off a snapshot so a node added this round doesn't expand again within it.
-    const edges = session.skill_graph.edges ?? [];
-    const focusIds = new Set(focusNodeIds);
-    for (let hop = 0; hop < 2; hop++) {
-      const frontier = new Set(focusIds);
-      for (const e of edges) {
-        if (frontier.has(e.source)) focusIds.add(e.target);
-        if (frontier.has(e.target)) focusIds.add(e.source);
-      }
+    // How many hops of context to frame is decided from the real layout, not a fixed number — see
+    // focusFrameIds. Positions come from the instance rather than the nodes useMemo so this effect
+    // doesn't re-fire (and yank the camera) on every status change; they're also React Flow's own
+    // measured boxes, so the bbox matches what fitView will actually compute.
+    const boxes: Record<string, NodeBox> = {};
+    for (const n of instance.getNodes()) {
+      boxes[n.id] = {
+        x: n.position.x,
+        y: n.position.y,
+        // Fall back to the box dagre reserved, for the frame before React Flow has measured.
+        width: n.measured?.width || NODE_WIDTH,
+        height: n.measured?.height || NODE_HEIGHT,
+      };
     }
+    const focusIds = focusFrameIds(
+      focusNodeIds,
+      session.skill_graph.edges ?? [],
+      boxes,
+      { width: container.clientWidth, height: container.clientHeight },
+    );
     const run = () =>
       instance.fitView({
-        nodes: [...focusIds].map((id) => ({ id })),
+        nodes: focusIds.map((id) => ({ id })),
         // maxZoom matters as much as padding: without it a two-or-three-node focus set zooms past 1.8
         // and clips the very node the new ones attach to, so the rewire reads as an unrelated card
-        // instead of a change to the map. Cap it near the mount-time framing and keep enough padding
-        // that the surrounding graph stays visible for context.
-        padding: 0.45,
+        // instead of a change to the map. Cap it near the mount-time framing. Padding is in pixels
+        // and matches what focusFrameIds budgeted for when it sized the set.
+        padding: { x: `${FOCUS_PADDING_X}px`, y: `${FOCUS_PADDING_Y}px` },
         maxZoom: 1.1,
         duration: reduceMotion ? 0 : 900,
       });

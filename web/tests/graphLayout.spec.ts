@@ -1,5 +1,14 @@
 import { expect, test } from "@playwright/test";
-import { layoutSkillGraph } from "../lib/graphLayout";
+import {
+  FOCUS_MIN_ZOOM,
+  FOCUS_PADDING_X,
+  FOCUS_PADDING_Y,
+  focusFrameIds,
+  layoutSkillGraph,
+  NODE_HEIGHT,
+  NODE_WIDTH,
+  type NodeBox,
+} from "../lib/graphLayout";
 import type { SkillEdge, SkillNode } from "../lib/types";
 
 // Pure layout unit tests — no page navigation. SkillEdge convention: source = prerequisite,
@@ -45,5 +54,106 @@ test.describe("layoutSkillGraph", () => {
 
     expect(Object.keys(positions).sort()).toEqual(["A", "B"]);
     expect(positions.A.x).toBeLessThan(positions.B.x);
+  });
+});
+
+// ── Camera framing ───────────────────────────────────────────────────────────
+// The rewire cue regressed once already: values tuned on a small graph clipped on a bigger one, and
+// nothing caught it because the arithmetic was inline in an effect. It is pure arithmetic over the
+// dagre layout, so it is guarded here rather than in a browser.
+const CARD = { width: NODE_WIDTH, height: NODE_HEIGHT };
+const VIEWPORT = { width: 1116, height: 418 }; // the h-[420px] surface, less its 1px border
+
+function boxesFor(nodes: SkillNode[], edges: SkillEdge[]): Record<string, NodeBox> {
+  const { positions } = layoutSkillGraph(nodes, edges);
+  return Object.fromEntries(
+    nodes.map((n) => [n.id, { ...positions[n.id], ...CARD }]),
+  );
+}
+
+function fitZoom(ids: string[], boxes: Record<string, NodeBox>): number {
+  const xs = ids.map((id) => boxes[id]);
+  const width = Math.max(...xs.map((b) => b.x + b.width)) - Math.min(...xs.map((b) => b.x));
+  const height = Math.max(...xs.map((b) => b.y + b.height)) - Math.min(...xs.map((b) => b.y));
+  return Math.min(
+    (VIEWPORT.width - FOCUS_PADDING_X * 2) / width,
+    (VIEWPORT.height - FOCUS_PADDING_Y * 2) / height,
+  );
+}
+
+/**
+ * A path of `rankCount` ranks, `perRank` sibling skills each, fully connected rank-to-rank, plus
+ * `unlocks` long-range edges from the middle node to nodes several ranks downstream — the shape a
+ * mature graph reaches after the adaptation agent has added an unlock edge per high score. Then two
+ * remedial prerequisites are hung off that middle node, which is the low-score adaptation.
+ */
+function rewiredGraph(rankCount: number, perRank: number, unlocks: number) {
+  const ranks: string[][] = [];
+  const nodes: SkillNode[] = [];
+  const edges: SkillEdge[] = [];
+  for (let r = 0; r < rankCount; r++) {
+    const rank = Array.from({ length: perRank }, (_, j) => `n${r}_${j}`);
+    for (const id of rank) nodes.push(node(id));
+    if (r > 0) for (const a of ranks[r - 1]) for (const b of rank) edges.push({ source: a, target: b });
+    ranks.push(rank);
+  }
+  const mid = Math.floor(rankCount / 2);
+  const graded = ranks[mid][0];
+  for (let u = 0; u < unlocks; u++) {
+    const target = ranks[Math.min(mid + 3 + u, rankCount - 1)][u % perRank];
+    if (target !== graded) edges.push({ source: graded, target });
+  }
+  for (const id of ["rem1", "rem2"]) {
+    nodes.push(node(id));
+    edges.push({ source: id, target: graded });
+  }
+  return { nodes, edges, seeds: ["rem1", "rem2"] };
+}
+
+test.describe("focusFrameIds", () => {
+  test("always frames the new nodes and what they attach to", () => {
+    const { nodes, edges, seeds } = rewiredGraph(7, 3, 3);
+    const boxes = boxesFor(nodes, edges);
+
+    const ids = focusFrameIds(seeds, edges, boxes, VIEWPORT);
+
+    expect(ids).toEqual(expect.arrayContaining([...seeds, "n3_0"]));
+  });
+
+  test("frames a young graph with more context than a mature one", () => {
+    const young = rewiredGraph(3, 2, 0);
+    const mature = rewiredGraph(8, 3, 3);
+
+    const youngIds = focusFrameIds(young.seeds, young.edges, boxesFor(young.nodes, young.edges), VIEWPORT);
+    const matureIds = focusFrameIds(mature.seeds, mature.edges, boxesFor(mature.nodes, mature.edges), VIEWPORT);
+
+    // The young path is small enough to frame whole — the cue shows the map, not three cards adrift.
+    expect(youngIds.length).toBe(young.nodes.length);
+    // The mature one is not, so it gives up context rather than the frame — but it degrades to a
+    // partial hop, not back to the three cards a whole-hop-or-nothing rule would leave.
+    expect(matureIds.length).toBeLessThan(mature.nodes.length);
+    expect(matureIds.length).toBeGreaterThan([...mature.seeds, "n4_0"].length);
+  });
+
+  test("keeps the fit above the legibility floor at every graph size", () => {
+    // The regression this guards: values that framed cleanly at 5 nodes clipped at 15. Sweep the
+    // whole range the consensus agent produces (6-14 nodes) plus growth well past it.
+    for (const rankCount of [2, 3, 4, 5, 6, 7, 8, 10]) {
+      for (const perRank of [1, 2, 3]) {
+        for (const unlocks of [0, 2, 3]) {
+          const { nodes, edges, seeds } = rewiredGraph(rankCount, perRank, unlocks);
+          const boxes = boxesFor(nodes, edges);
+
+          const ids = focusFrameIds(seeds, edges, boxes, VIEWPORT);
+
+          // Below FOCUS_MIN_ZOOM the frame is either clamped by React Flow's minZoom (which discards
+          // the padding and slices edge cards) or too small to read. Either way it is a regression.
+          expect(
+            fitZoom(ids, boxes),
+            `${rankCount}x${perRank} ranks, ${unlocks} unlock edges: framed ${ids.length}/${nodes.length}`,
+          ).toBeGreaterThanOrEqual(FOCUS_MIN_ZOOM);
+        }
+      }
+    }
   });
 });
