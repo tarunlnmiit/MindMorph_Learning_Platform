@@ -2,8 +2,11 @@
 
 Reconstructs the real failing payload: the model emitted edges sourced from ``mlops_tools``, a node
 id absent from the node list, which permanently locked ``production_ml_systems`` and
-``model_deployment_and_monitoring`` and made ``is_session_complete`` unreachable. All hermetic —
-no LLM, no network.
+``model_deployment_and_monitoring`` and made ``is_session_complete`` unreachable.
+
+Two lanes for one invariant: BUILD time (``prune_dangling_edges`` in consensus_node) keeps new graphs
+clean; READ time (``prereqs_by_node``, which reuses the same function) keeps sessions persisted before
+that landed finishable, without rewriting stored learner state. All hermetic — no LLM, no network.
 """
 import os
 import sys
@@ -16,7 +19,14 @@ if ROOT not in sys.path:
 import graph.learning_plan_graph as glp
 from graph.learning_plan_graph import build_graph
 from graph.skill_graph_adapt import prune_dangling_edges
-from services.completion import complete_node_ids, is_session_complete, locked_node_ids
+from services.completion import (
+    _warn_dangling,
+    complete_node_ids,
+    incomplete_prereq_labels,
+    is_session_complete,
+    locked_node_ids,
+    prereqs_by_node,
+)
 
 
 def _incoherent_graph() -> dict:
@@ -47,13 +57,87 @@ def _all_mastered(graph: dict) -> dict:
     return {n["id"]: {"status": "mastered", "best_score": 100} for n in graph["nodes"]}
 
 
-def test_dangling_edges_break_completion_before_repair():
-    """Guards the premise: without the repair the path is permanently unfinishable."""
+def _healthy_graph() -> dict:
     bad = _incoherent_graph()
+    return bad | {"edges": [e for e in bad["edges"] if "mlops_tools" not in (e["source"], e["target"])]}
+
+
+# --- Read-time guard: a session PERSISTED before the build-time prune landed -------------------
+# Those sessions are stored whole (persistence/models.py) and rehydrated verbatim — nothing
+# revalidates them — so the guard has to live where prerequisites are computed.
+
+def test_persisted_broken_session_is_finishable_without_rewriting_it():
+    """The exact regression: a stored graph with a phantom SOURCE must still be completable."""
+    bad = _incoherent_graph()
+    stored_edges = [dict(e) for e in bad["edges"]]
     state = _all_mastered(bad)
-    assert "production_ml_systems" in locked_node_ids(bad, state)
-    assert "model_deployment_and_monitoring" in locked_node_ids(bad, state)
-    assert is_session_complete(bad, state) is False
+
+    assert locked_node_ids(bad, state) == set()
+    assert complete_node_ids(bad, state) == {n["id"] for n in bad["nodes"]}
+    assert is_session_complete(bad, state) is True
+    assert bad["edges"] == stored_edges  # stored session untouched — no migration, no rewrite
+
+
+def test_read_time_guard_only_ignores_the_phantom_prerequisite():
+    """Real prerequisites still gate; only the unmasterable phantom is dropped."""
+    bad = _incoherent_graph()
+    assert prereqs_by_node(bad) == {
+        "python_basics": set(),
+        "ml_fundamentals": {"python_basics"},
+        "production_ml_systems": {"ml_fundamentals"},   # phantom source gone, real one kept
+        "model_deployment_and_monitoring": set(),        # only prereq was the phantom -> a root
+    }
+
+    fresh = {n["id"]: {"status": "available", "best_score": 0} for n in bad["nodes"]}
+    assert "production_ml_systems" in locked_node_ids(bad, fresh)
+    assert "model_deployment_and_monitoring" not in locked_node_ids(bad, fresh)
+    assert is_session_complete(bad, fresh) is False
+
+    # is_session_complete fires only once the REAL prerequisites are mastered.
+    partial = fresh | {"python_basics": {"status": "mastered", "best_score": 100}}
+    assert is_session_complete(bad, partial) is False
+
+
+def test_phantom_id_never_leaks_into_the_lock_message():
+    """The raw slug used to surface as 'Requires: …, mlops_tools, …' in the UI/accessible name."""
+    bad = _incoherent_graph()
+    fresh = {n["id"]: {"status": "available", "best_score": 0} for n in bad["nodes"]}
+    labels = incomplete_prereq_labels(bad, fresh, "production_ml_systems")
+    assert labels == ["ML Fundamentals"]
+
+
+def test_read_time_guard_is_loud_not_silent():
+    _warn_dangling.cache_clear()  # the warning is deduped per distinct dangling-edge set
+    import logging
+    records = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record):
+            records.append(record.getMessage())
+
+    logger = logging.getLogger("services.completion")
+    handler = _Capture()
+    logger.addHandler(handler)
+    try:
+        prereqs_by_node(_incoherent_graph())
+    finally:
+        logger.removeHandler(handler)
+    assert any("mlops_tools" in m for m in records)
+
+
+def test_healthy_graph_is_completely_unaffected():
+    good = _healthy_graph()
+    _warn_dangling.cache_clear()
+    before = _warn_dangling.cache_info().currsize
+
+    assert prereqs_by_node(good) == {
+        "python_basics": set(),
+        "ml_fundamentals": {"python_basics"},
+        "production_ml_systems": {"ml_fundamentals"},
+        "model_deployment_and_monitoring": set(),
+    }
+    assert _warn_dangling.cache_info().currsize == before  # nothing dropped -> nothing warned
+    assert is_session_complete(good, _all_mastered(good)) is True
 
 
 def test_prune_drops_only_dangling_edges_and_is_immutable():
