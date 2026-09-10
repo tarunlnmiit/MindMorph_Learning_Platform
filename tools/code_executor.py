@@ -42,6 +42,13 @@ _SECRET_MARKERS = ("API_KEY", "APIKEY", "TOKEN", "SECRET", "PASSWORD", "GROQ", "
 
 _SUMMARY_RE = re.compile(r"^MINDMORPH_SUMMARY\s+(\d+)\s+(\d+)\s*$", re.MULTILINE)
 
+# Child output is shown to the learner verbatim, and Python stamps the sandbox's absolute path into
+# ImportErrors and tracebacks ("cannot import name 'x' from 'solution' (/private/var/.../solution.py)").
+# That path is noise to a learner and leaks local filesystem layout. Match on the temp-dir prefix
+# rather than the mkdtemp string itself — mkdtemp returns /var/folders/... while Python reports the
+# resolved /private/var/folders/... — and keep only the filename.
+_SANDBOX_PATH_RE = re.compile(r"(?:/[^/\s'\"()<>,]+)*/mindmorph_grade_[^/\s'\"()<>,]*(?:/[^/\s'\"()<>,]+)*")
+
 # Self-contained runner written into the temp dir. No third-party imports — works without pytest.
 _RUNNER_SRC = '''\
 import importlib, sys, traceback
@@ -99,6 +106,15 @@ def _child_env(tmp: str) -> Dict[str, str]:
     return env
 
 
+def _strip_sandbox_paths(output: str) -> str:
+    """Relativise absolute sandbox paths in child output down to bare filenames.
+
+    Keeps the useful part of the message ("cannot import name 'x' from 'solution'") and drops the
+    temp-dir path. Applied once to the raw child output, so every derived field inherits it.
+    """
+    return _SANDBOX_PATH_RE.sub(lambda m: os.path.basename(m.group(0)), output or "")
+
+
 def _parse_summary(output: str):
     """Return (passed, total) from the runner's summary line, or None if absent."""
     m = _SUMMARY_RE.search(output or "")
@@ -138,6 +154,8 @@ def execute_tests(
 
         env = _child_env(tmp)
         stdout, _returncode, timed_out = _run([sys.executable, "_runner.py"], tmp, env, timeout)
+        # Clean before parsing/truncating so failures, stdout and the [-4000:] slice all inherit it.
+        stdout = _strip_sandbox_paths(stdout)
         if timed_out:
             return {"passed": 0, "total": 0, "failures": ["Execution timed out (possible infinite loop)."],
                     "score": 0.0, "stdout": (stdout or "")[-4000:], "timed_out": True}
