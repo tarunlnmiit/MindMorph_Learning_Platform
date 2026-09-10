@@ -140,6 +140,11 @@ export default function SessionPage() {
         </div>
       </header>
 
+      {/* The Reviewer agent's verdict, surfaced. The pipeline serves a rejected graph anyway (the
+          path is still completable), so the learner has to be told the plan may have a hole — but
+          only when the verdict is explicitly false; null/absent means "no verdict", not "failed". */}
+      {session.review_passed === false && <ReviewCaveat notes={session.review_notes} />}
+
       {pendingAssessment && session.assessment ? (
         <section className="mt-8">
           {errorMsg && (
@@ -244,6 +249,44 @@ export default function SessionPage() {
         </>
       )}
     </main>
+  );
+}
+
+// An editor's note, not a failure state: a slim gold-edged strip under the header rather than a
+// `.surface` card, so it reads as an annotation on the roadmap instead of competing with it.
+// `<aside>` (complementary landmark), never role="alert" — nothing has *happened*, this is standing
+// context present on load. `notes` is model-generated and untrusted, so it goes through JSX text
+// interpolation only: no markdown, no dangerouslySetInnerHTML, nothing that could inject markup.
+// Dismissal is in-memory (state lives here, so the page's early returns can't reorder hooks) — the
+// note is slight enough that surviving a reload costs nothing.
+function ReviewCaveat({ notes }: { notes?: string | null }) {
+  const [dismissed, setDismissed] = useState(false);
+  if (dismissed) return null;
+  const reason = notes?.trim();
+
+  return (
+    <aside
+      aria-label="Note about this path"
+      className="mt-6 flex items-start gap-4 rounded-lg border-l-2 py-3 pl-4 pr-3"
+      style={{ borderColor: "var(--color-gold-dim)", background: "oklch(80% 0.12 85 / 0.05)" }}
+    >
+      <div className="flex-1">
+        <p className="eyebrow">Reviewer’s note</p>
+        <p className="mt-1.5 text-sm text-text-muted">
+          {reason
+            ? `This path is usable as-is, but our reviewer flagged a possible gap: ${reason}`
+            : "This path is usable as-is, but our reviewer flagged a possible gap in its coverage."}{" "}
+          Worth a second look if something feels missing as you work through it.
+        </p>
+      </div>
+      <button
+        onClick={() => setDismissed(true)}
+        aria-label="Dismiss reviewer’s note"
+        className="accent-ring rounded px-2 py-1 text-sm text-text-muted hover:text-text"
+      >
+        ✕
+      </button>
+    </aside>
   );
 }
 

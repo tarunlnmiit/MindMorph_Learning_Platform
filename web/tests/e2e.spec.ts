@@ -23,10 +23,25 @@ function makeSession() {
   };
 }
 
-async function mockApi(page: Page, opts: { injectRemedial?: boolean } = {}) {
-  const ls = makeSession();
+async function mockApi(
+  page: Page,
+  opts: {
+    injectRemedial?: boolean;
+    // Reviewer verdict as the backend serializes it. `undefined` = key absent from the payload
+    // (older sessions); `null` = Reviewer ran but returned no verdict. Both must render nothing.
+    review?: { passed?: boolean | null; notes?: string | null };
+  } = {},
+) {
+  const ls = makeSession() as ReturnType<typeof makeSession> & {
+    review_passed?: boolean | null;
+    review_notes?: string | null;
+  };
   const sid = "sess1";
-  const { injectRemedial = false } = opts;
+  const { injectRemedial = false, review } = opts;
+  if (review) {
+    ls.review_passed = review.passed;
+    ls.review_notes = review.notes;
+  }
 
   await page.route("**/sessions/*", async (route) => {
     // GET /sessions/{user} → list
@@ -212,3 +227,55 @@ test("locked node shows a lock message", async ({ page }) => {
   await page.getByText("Data Structures").first().click();
   await expect(page.getByText(/Locked — first complete: Python Basics/)).toBeVisible();
 });
+
+// The Reviewer agent can reject a generated graph while the pipeline serves it anyway. The learner
+// gets an editor's-note caveat carrying the actual reason — but ONLY on an explicit `false`.
+test("a rejected review surfaces a dismissible caveat with the reviewer's reason", async ({ page }) => {
+  await mockApi(page, {
+    review: {
+      passed: false,
+      // Model-generated text, so it's untrusted: the markup here must survive as literal
+      // characters. Guards against anyone swapping the JSX interpolation for react-markdown
+      // (already a dependency, used by LessonPanel next door) and reopening the injection hole.
+      notes:
+        'a critical foundational skill—core Machine Learning concepts—is <b>absent</b> <img src=x onerror="alert(1)">.',
+    },
+  });
+  await openSession(page);
+
+  const note = page.getByRole("complementary", { name: "Note about this path" });
+  await expect(note).toBeVisible();
+  await expect(note).toContainText("core Machine Learning concepts—is <b>absent</b>");
+  await expect(note.locator("b, img")).toHaveCount(0);
+  // An editor's note, not an error: it must not claim the alert role. Scoped to `main` — the
+  // Next.js dev-tools overlay parks its own role="alert" element outside the app's markup.
+  await expect(page.getByRole("main").getByRole("alert")).toHaveCount(0);
+
+  await note.getByRole("button", { name: /Dismiss/ }).click();
+  await expect(note).toHaveCount(0);
+});
+
+test("a rejected review with no reason still explains itself", async ({ page }) => {
+  await mockApi(page, { review: { passed: false, notes: "   " } });
+  await openSession(page);
+
+  const note = page.getByRole("complementary", { name: "Note about this path" });
+  await expect(note).toBeVisible();
+  await expect(note).toContainText("flagged a possible gap in its coverage");
+});
+
+// The regression that matters most: absence of a verdict must never read as failure.
+for (const [name, review] of [
+  ["passing", { passed: true, notes: null }],
+  ["null (Reviewer returned no verdict)", { passed: null, notes: null }],
+  ["absent from the payload", { passed: undefined, notes: undefined }],
+] as const) {
+  test(`no caveat when the review verdict is ${name}`, async ({ page }) => {
+    await mockApi(page, { review });
+    // Awaits the session actually rendering, so the absence assertions can't pass vacuously.
+    await openSession(page);
+
+    await expect(page.getByRole("complementary", { name: "Note about this path" })).toHaveCount(0);
+    await expect(page.getByText(/Reviewer’s note/)).toHaveCount(0);
+  });
+}
