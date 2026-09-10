@@ -71,23 +71,36 @@ async function openLesson(page: Page, label: string, heading: string) {
 
 /** Everything mermaid could have orphaned outside the React tree, plus its error graphic. */
 function domState(page: Page) {
-  return page.evaluate(() => ({
-    // Direct children of body, identified rather than merely counted — Monaco and the Next dev
-    // overlay legitimately park elements here, so the assertion is "this set did not change".
-    bodyChildren: [...document.body.children]
-      .map((c) => `${c.tagName}#${c.id}.${c.className}`)
-      .join(" | "),
-    // Scoped to body's DIRECT children: that is where mermaid appends its working div when render()
-    // is called without an svgContainingElement. A successfully rendered diagram also carries
-    // mmd-prefixed ids, but those live inside the React tree and are not artifacts.
-    orphanedRenderDivs: document.querySelectorAll(
-      'body > [id^="mmd-"], body > [id^="dmmd-"], body > [id^="immd-"]',
-    ).length,
-    errorGraphics: document.querySelectorAll(
-      '[aria-roledescription="error"], .error-icon, .error-text',
-    ).length,
-    syntaxErrorText: document.body.innerText.includes("Syntax error"),
-  }));
+  return page.evaluate(() => {
+    // Mermaid's fingerprint on a body-level node: the render-id-derived ids it appends (`mmd-` for
+    // the working div, `d`/`i` prefixed variants), its error bomb graphic, or its error text. Only
+    // these make a body child a mermaid artifact. Monaco (`.context-view`,
+    // `.monaco-aria-container`) and the Next dev overlay also append to body, at times this test
+    // cannot control, so a whole-body snapshot comparison would be asserting on their timing rather
+    // than on mermaid. Matched on the body child ITSELF, not its subtree: a successful render's svg
+    // also carries an `mmd-` id, but it lives inside <main> in the React tree and is the product,
+    // not an artifact. Mermaid's temp/error div is always a direct body child ided off the render id
+    // (`mmd-…`, `dmmd-…`, `immd-…`), which is exactly what the original bug orphaned.
+    const MERMAID_SELECTOR =
+      '[id^="mmd-"], [id^="dmmd-"], [id^="immd-"], [aria-roledescription="error"], .error-icon, .error-text';
+    return {
+      // Descriptors of the body children that carry mermaid's fingerprint. Empty is the property
+      // under test: mermaid leaves nothing attached to document.body.
+      mermaidBodyChildren: [...document.body.children]
+        .filter((c) => c.matches(MERMAID_SELECTOR))
+        .map((c) => `${c.tagName}#${c.id}.${c.className}`),
+      // Scoped to body's DIRECT children: that is where mermaid appends its working div when render()
+      // is called without an svgContainingElement. A successfully rendered diagram also carries
+      // mmd-prefixed ids, but those live inside the React tree and are not artifacts.
+      orphanedRenderDivs: document.querySelectorAll(
+        'body > [id^="mmd-"], body > [id^="dmmd-"], body > [id^="immd-"]',
+      ).length,
+      errorGraphics: document.querySelectorAll(
+        '[aria-roledescription="error"], .error-icon, .error-text',
+      ).length,
+      syntaxErrorText: document.body.innerText.includes("Syntax error"),
+    };
+  });
 }
 
 test("an unrepairable diagram falls back to the original source and orphans nothing", async ({
@@ -100,10 +113,8 @@ test("an unrepairable diagram falls back to the original source and orphans noth
   await mockApi(page, UNREPAIRABLE);
   await openSession(page);
 
-  // Baseline taken with a plain lesson already open, so Monaco's body-level nodes are mounted and
-  // the comparison isolates mermaid's contribution.
+  // Open a plain lesson first, so the diagram lesson is reached by a real mount/unmount cycle.
   await openLesson(page, "Storage", "Storage");
-  const baseline = await domState(page);
 
   await openLesson(page, "Pipelines", "Pipelines");
   const fallback = page.locator("pre.overflow-x-auto", { hasText: "Raw Files (CSV, JSON, SQL)" });
@@ -114,26 +125,53 @@ test("an unrepairable diagram falls back to the original source and orphans noth
   await expect(page.locator(".lesson-prose svg")).toHaveCount(0);
 
   const rendered = await domState(page);
+  expect(rendered.mermaidBodyChildren).toEqual([]);
   expect(rendered.orphanedRenderDivs).toBe(0);
   expect(rendered.errorGraphics).toBe(0);
   expect(rendered.syntaxErrorText).toBe(false);
-  expect(rendered.bodyChildren).toBe(baseline.bodyChildren);
 
   // Unmount: the pre-fix artifact lived outside the React tree and outlived exactly this.
   await openLesson(page, "Storage", "Storage");
   await expect(page.locator("pre", { hasText: "Raw Files" })).toHaveCount(0);
 
   const unmounted = await domState(page);
+  expect(unmounted.mermaidBodyChildren).toEqual([]);
   expect(unmounted.orphanedRenderDivs).toBe(0);
   expect(unmounted.errorGraphics).toBe(0);
   expect(unmounted.syntaxErrorText).toBe(false);
-  expect(unmounted.bodyChildren).toBe(baseline.bodyChildren);
 });
 
-// The natural companion test — "the repairable diagram still renders an SVG" — is deliberately NOT
-// here, because under `next dev` it cannot pass: React StrictMode double-invokes the effect, the
-// discarded first pass's `finally { removeMermaidArtifacts(renderId) }` deletes the second pass's
-// in-flight working div (both share one useId-derived renderId), and BOTH renders throw. Every
-// diagram therefore falls back to <pre> in dev. Verified against `next build && next start`, where
-// the effect runs once and the same lesson renders `<svg id="mmd-_r_0_" class="flowchart">`, so this
-// is a dev-only defect — but it also means the fallback branch is the only one dev ever exercises.
+// The companion test below used to be impossible under `next dev`: React StrictMode double-invokes
+// the effect, and while both passes shared one useId-derived renderId the discarded first pass's
+// `finally { removeMermaidArtifacts(renderId) }` deleted the second pass's in-flight working div, so
+// BOTH renders threw and every diagram fell back to <pre> in dev. The passes are now distinguished
+// by a per-invocation sequence suffix on the render id (`mmd-<useId>-<n>`), so each pass owns — and
+// cleans up — only its own mermaid nodes. The test therefore asserts BOTH properties in dev: the
+// diagram renders an <svg>, and the successful render still orphans nothing onto document.body,
+// including after unmount.
+const VALID = "graph TD\n  A[Alpha] --> B[Beta]";
+
+test("a valid diagram renders an svg and still orphans nothing", async ({ page }) => {
+  await mockApi(page, VALID);
+  await openSession(page);
+
+  await openLesson(page, "Storage", "Storage");
+
+  await openLesson(page, "Pipelines", "Pipelines");
+  const svg = page.locator(".lesson-prose svg");
+  await expect(svg).toBeVisible();
+  await expect(svg).toHaveAttribute("id", /^mmd-/);
+  await expect(page.getByText("Rendering diagram…")).toHaveCount(0);
+  await expect(page.locator("pre", { hasText: "graph TD" })).toHaveCount(0);
+
+  // A successful render also appends a working div to document.body while it runs; it must be gone.
+  const rendered = await domState(page);
+  expect(rendered.mermaidBodyChildren).toEqual([]);
+  expect(rendered.orphanedRenderDivs).toBe(0);
+
+  await openLesson(page, "Storage", "Storage");
+  await expect(page.locator(".lesson-prose svg")).toHaveCount(0);
+  const unmounted = await domState(page);
+  expect(unmounted.mermaidBodyChildren).toEqual([]);
+  expect(unmounted.orphanedRenderDivs).toBe(0);
+});
