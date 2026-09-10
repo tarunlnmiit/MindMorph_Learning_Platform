@@ -146,6 +146,19 @@ export function SkillGraph({
     onOpenRef.current = onOpen;
   }, [onOpen]);
 
+  // Same invariant lib/status.ts:prereqsByNode and the backend's prune_dangling_edges enforce: an
+  // edge naming a node that doesn't exist (a hallucinated `source` from an LLM adaptation) is not
+  // part of the graph. Neither consumer below breaks on one today — layoutSkillGraph filters
+  // internally and React Flow renders a dangling edge as null — but they should all see the same
+  // edge list, and this keeps the phantom id out of the focus frame and the seen-edge bookkeeping.
+  // Keyed on skill_graph alone so a node_state-only update can't re-fire the camera effect.
+  const graphEdges = useMemo(() => {
+    const ids = new Set(session.skill_graph.nodes.map((n) => n.id));
+    return (session.skill_graph.edges ?? []).filter(
+      (e) => ids.has(e.source) && ids.has(e.target),
+    );
+  }, [session.skill_graph]);
+
   const { nodes, edges } = useMemo(() => {
     const graph = session.skill_graph;
     const status = displayStatus(graph, session.node_state);
@@ -161,7 +174,7 @@ export function SkillGraph({
 
     // Edge-aware layered layout (dagre): position by the prereq DAG, so remedial prerequisite nodes
     // added mid-session render left of the node they unlock and the graph reflows automatically.
-    const { positions } = layoutSkillGraph(graph.nodes, graph.edges ?? []);
+    const { positions } = layoutSkillGraph(graph.nodes, graphEdges);
     const rfNodes: Node<SkillNodeData>[] = graph.nodes.map((n) => {
       return {
         id: n.id,
@@ -182,7 +195,7 @@ export function SkillGraph({
       };
     });
 
-    const rfEdges: Edge[] = (graph.edges ?? []).map((e, i) => {
+    const rfEdges: Edge[] = graphEdges.map((e, i) => {
       const key = `${e.source}->${e.target}`;
       return {
         id: `e${i}`,
@@ -195,7 +208,7 @@ export function SkillGraph({
     });
 
     return { nodes: rfNodes, edges: rfEdges };
-  }, [session]);
+  }, [session, graphEdges]);
 
   // Mark this render's ids/edge-keys as seen AFTER commit, so the next diff excludes them. Runs
   // post-commit (not during render), so StrictMode's dev double-invoke is harmless — Set.add is
@@ -237,7 +250,7 @@ export function SkillGraph({
     }
     const focusIds = focusFrameIds(
       focusNodeIds,
-      session.skill_graph.edges ?? [],
+      graphEdges,
       boxes,
       { width: container.clientWidth, height: container.clientHeight },
     );
@@ -262,7 +275,7 @@ export function SkillGraph({
     // the re-render settle first.
     const timer = window.setTimeout(run, 150);
     return () => window.clearTimeout(timer);
-  }, [focusNodeIds, session.skill_graph.edges]);
+  }, [focusNodeIds, graphEdges]);
 
   return (
     <div ref={containerRef} className="surface h-[420px] overflow-hidden">
