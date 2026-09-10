@@ -11,6 +11,7 @@ A failing grade locks the node and grows two new prerequisite nodes ahead of it 
 Captured footage of the adaptive rewire in action: `docs/media/rewire_demo.mp4` (before/after stills:
 `rewire_before.png`, `rewire_after.png`).
 
+[![tests](https://github.com/tarunlnmiit/MindMorph_Learning_Platform/actions/workflows/tests.yml/badge.svg)](https://github.com/tarunlnmiit/MindMorph_Learning_Platform/actions/workflows/tests.yml)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![LangGraph](https://img.shields.io/badge/built%20with-LangGraph-1a1530)](https://langchain-ai.github.io/langgraph/)
