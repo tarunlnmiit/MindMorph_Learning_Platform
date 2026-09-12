@@ -39,28 +39,45 @@ class MarketAnalysisAgent:
             if salary_min and salary_max:
                 salary_str = f"${salary_min:,} - ${salary_max:,} {salary_currency} per {salary_unit}"
             
-            # Create a prompt for the LLM
+            # Create a prompt for the LLM.
+            #
+            # The description budget is 6000 chars, not 500. At 500 the real skills sat past the
+            # cut (a 6500-char posting reached the model at 8%) and the model filled the gap from
+            # priors — inventing certifications, tool stacks and benefits the posting never named.
+            # The fabrication is what makes it expensive, not the length.
             prompt = f"""
-            Please provide a concise and well-structured summary of the following job posting:
-            
+            You are the Market Agent for the MindMorph learning platform. Downstream, a Consensus
+            agent turns your output into skill nodes for a learning path, so the only thing that
+            matters here is which skills, tools and technologies THIS posting actually demands.
+
             Job Title: {job_data.get('title', 'N/A')}
             Company: {job_data.get('organization', 'N/A')}
             Location: {', '.join(job_data.get('locations_derived', ['N/A']))}
             Salary Range: {salary_str}
-            Posted Date: {job_data.get('date_posted', 'N/A')}
             Employment Type: {', '.join(job_data.get('employment_type', ['N/A']))}
-            
+
             Job Description:
-            {job_data.get('description_text', 'N/A')[:500]}
-            
-            Please summarize this job posting including:
-            1. Key responsibilities
-            2. Required qualifications
-            3. Preferred qualifications
-            4. Benefits and perks
-            5. Company overview
-            
-            Keep the summary clear, concise, and well-formatted.
+            {job_data.get('description_text', 'N/A')[:6000]}
+
+            Report, from the posting text above and nothing else:
+            1. The work the role actually does, in a few lines.
+            2. Required skills, tools, languages, platforms and technologies, named exactly as the
+               posting names them.
+            3. Skills and tools listed as preferred or nice-to-have, kept separate from required.
+            4. The seniority signal: years of experience, scope or level, if the posting states one.
+
+            Honesty rules, which override everything above:
+            - Report only what this posting states. Never add a skill, tool, certification,
+              qualification, benefit or company fact because it is typical for the role. If the
+              posting does not name a tool, that tool must not appear in your output at all, not
+              even as an example or a parenthetical.
+            - If a section has nothing in the posting to fill it, write one line saying the posting
+              does not state it, and move on.
+            - This is ONE posting, not a market survey. Describe what this employer asks for. Do not
+              write that anything is "in demand", "widely required", or common across the market.
+
+            Do not write a benefits/perks section or a company overview. Do not add career advice or
+            application tips. Compact bullets; every line names a skill, tool or stated requirement.
             """
             
             # Get response from LLM
