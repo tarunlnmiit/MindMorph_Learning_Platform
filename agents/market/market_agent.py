@@ -30,7 +30,7 @@ class MarketAnalysisAgent:
     # The scraper always fetches 10 (the actor's schema minimum) and the round-trip costs the
     # same for 1 as for 10, so sampling fewer than all of them discards evidence already paid for.
     MAX_POSTINGS = 10
-    # A skill named by a single posting is one employer's preference, not a frequency signal. It
+    # A skill named by a single employer is one employer's preference, not a frequency signal. It
     # still gets counted below; only the ranked table is cut here, to keep the Consensus slot small.
     MIN_FREQUENCY_TO_RANK = 2
 
@@ -47,9 +47,38 @@ class MarketAnalysisAgent:
         unit = job.get('ai_salary_unit_text') or 'YEAR'
         return f"{low:,} - {high:,} {currency} per {unit}"
 
+    @staticmethod
+    def _group_by_employer(jobs: list) -> list:
+        """Collapse postings to one entry per distinct employer.
+
+        Ten rows is not ten employers. On the verified run the ten postings were four employers, six
+        of them one aggregator's repost series of the same role ("Senior Level", "New Grad",
+        "Intern", ...). Counting those six separately turns one org's repost volume into "6/10
+        postings" — market demand, to the learner and to Consensus, from a single employer.
+
+        Skills are unioned across an employer's postings rather than taking the first posting's
+        list, so collapsing reposts drops no skill evidence — only the double-counting. A posting
+        with no `organization` is its own employer: grouping the blanks together would merge
+        unrelated roles and undercount.
+        """
+        groups, index = [], {}
+        for job in jobs:
+            key = (job.get('organization') or '').strip().casefold()
+            # ponytail: exact-string match only. "Jobright.ai" vs "Jobright Inc" reads as two
+            # employers; add normalization only if a real run shows that split mattering.
+            group = index.get(key) if key else None
+            if group is None:
+                group = {'job': job, 'postings': 0, 'skills': {}}
+                groups.append(group)
+                if key:
+                    index[key] = group
+            group['postings'] += 1
+            group['skills'].update(dict.fromkeys(job.get('ai_key_skills') or []))
+        return groups
+
     @classmethod
-    def _posting_block(cls, index: int, total: int, job: dict) -> str:
-        """One posting rendered from the actor's own extracted fields.
+    def _employer_block(cls, index: int, total: int, group: dict) -> str:
+        """One employer rendered from the actor's own extracted fields.
 
         Not `description_text`: the skills in these postings sit late in the prose (measured on a
         live fetch, the last verbatim skill mention landed between 56% and 99% of the way through),
@@ -59,10 +88,18 @@ class MarketAnalysisAgent:
         extraction, so 92% of the skill strings appear verbatim in the description and the rest are
         its paraphrase ("Containerization" for Docker); the summary labels the source for that reason.
         """
-        skills = job.get('ai_key_skills') or []
+        job = group['job']
+        skills = list(group['skills'])
+        reposts = group['postings']
+        header = f"Employer {index} of {total}"
+        if reposts > 1:
+            header += (
+                f" — this employer posted {reposts} variants of the same role in the sample"
+                f" (counted once; skills below are the union across them)"
+            )
         return (
-            f"Posting {index} of {total}\n"
-            f"Title: {job.get('title', 'N/A')} | Company: {job.get('organization', 'N/A')}\n"
+            f"{header}\n"
+            f"Title: {job.get('title', 'N/A')} | Company: {job.get('organization') or 'not stated'}\n"
             f"Location: {', '.join(job.get('locations_derived') or ['N/A'])} | "
             f"Employment: {', '.join(job.get('employment_type') or ['N/A'])}\n"
             f"Seniority stated: {job.get('seniority') or 'not stated'} | "
@@ -74,19 +111,22 @@ class MarketAnalysisAgent:
         )
 
     @classmethod
-    def _frequency_table(cls, jobs: list) -> str:
+    def _frequency_table(cls, groups: list) -> str:
         """Counted in Python, not by the model — counting across ten lists is what an LLM gets wrong,
-        and a miscounted frequency is worse than no frequency: it reads as evidence."""
-        counts = Counter(skill for job in jobs for skill in (job.get('ai_key_skills') or []))
-        total = len(jobs)
+        and a miscounted frequency is worse than no frequency: it reads as evidence.
+
+        The denominator is employers, not rows: a skill named by one employer six times is one
+        employer's preference however many times that employer reposted it."""
+        counts = Counter(skill for group in groups for skill in group['skills'])
+        total = len(groups)
         ranked = [
-            f"{skill} - {n}/{total} postings"
+            f"{skill} - {n}/{total} employers"
             for skill, n in counts.most_common()
             if n >= cls.MIN_FREQUENCY_TO_RANK
         ]
         singletons = sum(1 for n in counts.values() if n < cls.MIN_FREQUENCY_TO_RANK)
-        table = "\n".join(ranked) or "No skill is named by more than one posting."
-        return f"{table}\n({singletons} further skills are named by exactly 1/{total} postings.)"
+        table = "\n".join(ranked) or "No skill is named by more than one employer."
+        return f"{table}\n({singletons} further skills are named by exactly 1/{total} employers.)"
 
     async def summarize_job(self, job_data):
         """Summarize the sampled job postings into one market-evidence block.
@@ -101,9 +141,11 @@ class MarketAnalysisAgent:
             if not jobs:
                 return None
             jobs = jobs[: self.MAX_POSTINGS]
-            total = len(jobs)
+            n_postings = len(jobs)
+            groups = self._group_by_employer(jobs)
+            total = len(groups)
             blocks = "\n".join(
-                self._posting_block(i, total, job) for i, job in enumerate(jobs, start=1)
+                self._employer_block(i, total, g) for i, g in enumerate(groups, start=1)
             )
 
             prompt = f"""
@@ -111,21 +153,23 @@ class MarketAnalysisAgent:
             agent turns your output into skill nodes for a learning path, so the only thing that
             matters here is which skills, tools and technologies these postings actually demand.
 
-            {total} job postings were sampled. Each block below is the job board's own extraction
-            from one posting.
+            {n_postings} job postings were sampled. They come from {total} distinct employers -
+            several postings can be one employer reposting the same role, so every count below is
+            over employers, never over postings. Each block is one employer, from the job board's
+            own extraction of that employer's posting(s).
 
             {blocks}
-            Skill frequency across all {total} postings, already counted for you:
-            {self._frequency_table(jobs)}
+            Skill frequency across all {total} employers, already counted for you:
+            {self._frequency_table(groups)}
 
             Report:
-            1. What these roles do, in a few lines, covering the range across the postings.
+            1. What these roles do, in a few lines, covering the range across the employers.
             2. The skill frequency table above, reproduced exactly. Do not recount, reorder, merge
                or drop rows, and do not add a row that is not in it.
-            3. Seniority as a distribution, e.g. "6/{total} postings state 0-2 years" - from the
-               stated seniority and years-of-experience lines only.
-            4. What the postings ask for beyond named tools: degrees, domains, stated requirements.
-               Attribute each to a count, e.g. "3/{total} postings".
+            3. Seniority as a distribution over employers, e.g. "2/{total} employers state 0-2
+               years" - from the stated seniority and years-of-experience lines only.
+            4. What the employers ask for beyond named tools: degrees, domains, stated requirements.
+               Attribute each to a count, e.g. "3/{total} employers".
 
             Honesty rules, which override everything above:
             - Report only what these postings state. Never add a skill, tool, certification,
@@ -134,15 +178,19 @@ class MarketAnalysisAgent:
               example or a parenthetical.
             - If a section has nothing in the postings to fill it, write one line saying the postings
               do not state it, and move on.
-            - Every claim about more than one posting carries its count, always with the /{total}
-              denominator. A skill in 1/{total} postings is reported as 1/{total}, not dropped and
-              not inflated. Never write "in demand", "widely required" or "the market wants" without
-              a count attached - a count IS the claim.
-            - Give counts only, never posting numbers. Asked to attribute claims to specific
-              postings, the model guessed: a live run tagged a healthcare requirement to a posting
-              that was about marketing data. Nothing downstream reads the numbers, and a wrong one
-              is indistinguishable from evidence.
-            - {total} postings from one search is a sample, not the market. Say so in one line.
+            - Every claim about more than one employer carries its count, always with the /{total}
+              employers denominator. Never write a count out of {n_postings} postings: that
+              denominator counts reposts, not employers. A skill named by 1/{total} employers is
+              reported as 1/{total} employers, not dropped and not inflated. Never write "in
+              demand", "widely required" or "the market wants" without a count attached - a count
+              IS the claim.
+            - Give counts only, never employer or posting numbers. Asked to attribute claims to
+              specific postings, the model guessed: a live run tagged a healthcare requirement to a
+              posting that was about marketing data. Nothing downstream reads the numbers, and a
+              wrong one is indistinguishable from evidence.
+            - {total} employers from one search is a very small sample, not the market. Say so in
+              one line, giving the number of employers - never describe the sample as
+              {n_postings} postings.
             - These skill names are the job board's extraction of each posting, not always the
               posting's own wording. Say so in the same line.
 
@@ -150,7 +198,10 @@ class MarketAnalysisAgent:
             bullets; every line names a skill, a stated requirement or a count.
             """
 
-            logger.info("Market: summarizing %d job posting(s)", total)
+            logger.info(
+                "Market: summarizing %d job posting(s) from %d distinct employer(s)",
+                n_postings, total,
+            )
             response = await self.llm.ainvoke(prompt)
             return response.content
 

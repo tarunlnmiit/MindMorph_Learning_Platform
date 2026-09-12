@@ -113,11 +113,13 @@ async def _run_market(market_agent: Any, query: str, location: str = "United Sta
             return None
         with span("market.llm.summary"):
             # All the postings, not jobs[0]: the fetch already returns ten and the round-trip costs
-            # the same either way, so summarizing one discarded nine. `job` stays a single posting —
-            # services/learning_service.py ships market_output straight into the response, and ten
-            # raw postings on the wire is not what that field is for.
+            # the same either way, so summarizing one discarded nine.
             summary = await market_agent.summarize_job(jobs)
-        return {"job": jobs[0], "sampled": len(jobs), "summary": summary}
+        # No raw posting here. services/learning_service.py ships this dict onto the wire and into
+        # the persisted session, and the raw posting carries a named recruiter, their LinkedIn URL
+        # and a contact email — a third party's personal data, stored and transmitted for a field
+        # nothing reads (Consensus takes only `summary`; web/ never references market_output).
+        return {"sampled": len(jobs), "summary": summary}
     except Exception:
         logger.exception("Market node error")
         return None
