@@ -8,6 +8,7 @@ import {
   NODE_HEIGHT,
   NODE_WIDTH,
   type NodeBox,
+  REACT_FLOW_MIN_ZOOM,
 } from "../lib/graphLayout";
 import type { SkillEdge, SkillNode } from "../lib/types";
 
@@ -110,6 +111,30 @@ function rewiredGraph(rankCount: number, perRank: number, unlocks: number) {
   return { nodes, edges, seeds: ["rem1", "rem2"] };
 }
 
+/**
+ * The world-space rectangle the container actually shows after the cue's `fitView` — a port of
+ * `getViewportForBounds` (@xyflow/system) for the options SkillGraph passes: pixel padding, the
+ * minZoom/maxZoom clamp, and a frame centred on the framed bounds. Asserting containment against
+ * this, rather than against the framed-id list, is what catches "the node was excluded and really
+ * did land outside the glass" as opposed to merely "the set was smaller than the graph".
+ */
+function framedWorldRect(ids: string[], boxes: Record<string, NodeBox>) {
+  const bs = ids.map((id) => boxes[id]);
+  const x1 = Math.min(...bs.map((b) => b.x));
+  const y1 = Math.min(...bs.map((b) => b.y));
+  const x2 = Math.max(...bs.map((b) => b.x + b.width));
+  const y2 = Math.max(...bs.map((b) => b.y + b.height));
+  const zoom = Math.min(Math.max(fitZoom(ids, boxes), REACT_FLOW_MIN_ZOOM), 1.1);
+  const cx = (x1 + x2) / 2;
+  const cy = (y1 + y2) / 2;
+  return {
+    left: cx - VIEWPORT.width / 2 / zoom,
+    right: cx + VIEWPORT.width / 2 / zoom,
+    top: cy - VIEWPORT.height / 2 / zoom,
+    bottom: cy + VIEWPORT.height / 2 / zoom,
+  };
+}
+
 test.describe("focusFrameIds", () => {
   test("always frames the new nodes and what they attach to", () => {
     const { nodes, edges, seeds } = rewiredGraph(7, 3, 3);
@@ -135,6 +160,64 @@ test.describe("focusFrameIds", () => {
     expect(matureIds.length).toBeGreaterThan([...mature.seeds, "n4_0"].length);
   });
 
+  test("strands no node on a graph small enough to frame whole", () => {
+    // The reported failure: the cue framed a subset and left a card fully outside the right edge,
+    // on a graph Fit View showed complete. Cropping is only ever worth a stranded card when the
+    // whole graph genuinely will not fit.
+    for (const [rankCount, perRank, unlocks] of [
+      [3, 2, 0],
+      [4, 2, 0],
+      [5, 2, 2], // wholeFit 0.574 — the [minZoom, FOCUS_MIN_ZOOM) band the old rule cropped
+    ] as const) {
+      const { nodes, edges, seeds } = rewiredGraph(rankCount, perRank, unlocks);
+      const boxes = boxesFor(nodes, edges);
+      const all = nodes.map((n) => n.id);
+      // Precondition: these really are graphs the whole-graph branch should claim.
+      expect(fitZoom(all, boxes)).toBeGreaterThanOrEqual(REACT_FLOW_MIN_ZOOM);
+
+      const ids = focusFrameIds(seeds, edges, boxes, VIEWPORT);
+      const frame = framedWorldRect(ids, boxes);
+
+      const label = `${rankCount}x${perRank} ranks, ${unlocks} unlocks`;
+      expect(ids.length, `${label}: framed ${ids.length}/${all.length}`).toBe(all.length);
+      for (const id of all) {
+        const b = boxes[id];
+        expect(b.x, `${label}: ${id} off the left edge`).toBeGreaterThanOrEqual(frame.left);
+        expect(b.x + b.width, `${label}: ${id} off the right edge`).toBeLessThanOrEqual(frame.right);
+        expect(b.y, `${label}: ${id} off the top edge`).toBeGreaterThanOrEqual(frame.top);
+        expect(b.y + b.height, `${label}: ${id} off the bottom edge`).toBeLessThanOrEqual(frame.bottom);
+      }
+    }
+  });
+
+  test("frames an unreachable node when the graph fits whole", () => {
+    // `focusFrameIds` grows by walking edges, so a node no edge reaches — an island left by the
+    // dangling-edge filter in SkillGraph — was excluded at ANY zoom, however roomy the frame. The
+    // whole-graph branch keys on the measured boxes rather than the reachable set, which covers it.
+    const { nodes, edges, seeds } = rewiredGraph(4, 2, 0);
+    const withIsland = [...nodes, node("island")];
+    const boxes = boxesFor(withIsland, edges);
+
+    const ids = focusFrameIds(seeds, edges, boxes, VIEWPORT);
+
+    expect(fitZoom(withIsland.map((n) => n.id), boxes)).toBeGreaterThanOrEqual(REACT_FLOW_MIN_ZOOM);
+    expect(ids).toContain("island");
+  });
+
+  test("still crops, and crops partially, on a graph too big to frame whole", () => {
+    // The large-graph behaviour is deliberate and must not regress: the frame gives up context
+    // rather than legibility, but degrades to a partial hop instead of collapsing to the seeds.
+    const { nodes, edges, seeds } = rewiredGraph(8, 3, 3);
+    const boxes = boxesFor(nodes, edges);
+
+    const ids = focusFrameIds(seeds, edges, boxes, VIEWPORT);
+
+    expect(fitZoom(nodes.map((n) => n.id), boxes)).toBeLessThan(REACT_FLOW_MIN_ZOOM);
+    expect(ids.length).toBeLessThan(nodes.length);
+    expect(ids.length).toBeGreaterThan([...seeds, "n4_0"].length);
+    expect(fitZoom(ids, boxes)).toBeGreaterThanOrEqual(FOCUS_MIN_ZOOM);
+  });
+
   test("keeps the fit above the legibility floor at every graph size", () => {
     // The regression this guards: values that framed cleanly at 5 nodes clipped at 15. Sweep the
     // whole range the consensus agent produces (6-14 nodes) plus growth well past it.
@@ -146,12 +229,16 @@ test.describe("focusFrameIds", () => {
 
           const ids = focusFrameIds(seeds, edges, boxes, VIEWPORT);
 
-          // Below FOCUS_MIN_ZOOM the frame is either clamped by React Flow's minZoom (which discards
-          // the padding and slices edge cards) or too small to read. Either way it is a regression.
+          // Two floors, because the two frames answer to different things. A CROPPED frame is a
+          // choice the cue made, so it owes legibility: FOCUS_MIN_ZOOM. A WHOLE-graph frame is the
+          // same view the page mounts at, so it only owes not being clipped: the minZoom clamp,
+          // below which fitView throws the padding away and slices edge cards. Holding the whole
+          // -graph case to FOCUS_MIN_ZOOM would just forbid framing graphs that fit — the bug.
+          const floor = ids.length === nodes.length ? REACT_FLOW_MIN_ZOOM : FOCUS_MIN_ZOOM;
           expect(
             fitZoom(ids, boxes),
             `${rankCount}x${perRank} ranks, ${unlocks} unlock edges: framed ${ids.length}/${nodes.length}`,
-          ).toBeGreaterThanOrEqual(FOCUS_MIN_ZOOM);
+          ).toBeGreaterThanOrEqual(floor);
         }
       }
     }

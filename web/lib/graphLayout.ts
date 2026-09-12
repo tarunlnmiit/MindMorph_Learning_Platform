@@ -31,6 +31,13 @@ export const FOCUS_PADDING_Y = 28;
 // already fits at mount. Raise it if a browser pass says the cue is unreadable — the cost is context
 // (fewer cards framed), never a clipped frame.
 export const FOCUS_MIN_ZOOM = 0.6;
+// React Flow's own `minZoom` default, which the cue's `fitView` is clamped by. Below it the clamp
+// engages and the padding above is discarded, which is what slices cards at the container edge —
+// so it is the floor at which a frame is still guaranteed whole. It is deliberately LOWER than
+// FOCUS_MIN_ZOOM: the focus subset is a chosen crop and owes the learner legibility, while framing
+// the WHOLE graph is the same view this page already mounts at (`fitView` with the same clamp), so
+// the only question there is whether anything gets cut. Keep in sync with <ReactFlow>'s minZoom.
+export const REACT_FLOW_MIN_ZOOM = 0.5;
 
 export type NodeBox = { x: number; y: number; width: number; height: number };
 
@@ -69,6 +76,9 @@ function naturalFitZoom(
 /**
  * Which nodes the rewire camera should frame.
  *
+ * If the whole graph fits, that's the answer — see the first branch. Everything below is the case
+ * where it doesn't and a subset has to be chosen.
+ *
  * A fixed hop count can't hold across graph sizes: two hops off a mid-graph node is five cards on a
  * young path, but on a mature one — where every high score has added an unlock edge reaching several
  * ranks downstream — it sweeps most of the map, the natural fit falls under minZoom, and the frame
@@ -87,6 +97,15 @@ export function focusFrameIds(
   boxes: Record<string, NodeBox>,
   viewport: { width: number; height: number },
 ): string[] {
+  // Framing a subset only ever makes sense when the whole graph WON'T fit. When it will, cropping is
+  // strictly worse: it can strand a card outside the frame that the learner could otherwise see, and
+  // an unreachable one (an island left by a pruned edge) is stranded at ANY zoom because the widen
+  // below only travels edges. Checked against every measured box, not the reachable set, so both the
+  // too-small-to-widen case and the island case are covered. The floor is the clamp floor, not the
+  // legibility floor — see REACT_FLOW_MIN_ZOOM.
+  const allIds = Object.keys(boxes);
+  if (naturalFitZoom(allIds, boxes, viewport) >= REACT_FLOW_MIN_ZOOM) return allIds;
+
   const ids = new Set(seedIds);
   const widen = () => {
     const frontier = new Set(ids);
