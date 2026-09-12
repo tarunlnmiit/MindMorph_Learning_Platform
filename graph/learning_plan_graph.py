@@ -112,8 +112,12 @@ async def _run_market(market_agent: Any, query: str, location: str = "United Sta
         if not jobs:
             return None
         with span("market.llm.summary"):
-            summary = await market_agent.summarize_job(jobs[0])
-        return {"job": jobs[0], "summary": summary}
+            # All the postings, not jobs[0]: the fetch already returns ten and the round-trip costs
+            # the same either way, so summarizing one discarded nine. `job` stays a single posting —
+            # services/learning_service.py ships market_output straight into the response, and ten
+            # raw postings on the wire is not what that field is for.
+            summary = await market_agent.summarize_job(jobs)
+        return {"job": jobs[0], "sampled": len(jobs), "summary": summary}
     except Exception:
         logger.exception("Market node error")
         return None
