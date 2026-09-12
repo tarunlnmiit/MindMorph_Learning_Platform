@@ -57,6 +57,10 @@ export interface Lesson {
 }
 
 export interface GradeResult {
+  // Set when the generated tests could not run at all (missing library, undeclared import, absent
+  // data file). No score is reported — the submission was never measured, and nothing about the
+  // learner may be inferred from it.
+  harness_error?: boolean;
   score?: number;
   passed?: number;
   total?: number;

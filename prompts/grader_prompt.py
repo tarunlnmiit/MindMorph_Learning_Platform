@@ -9,6 +9,16 @@ For a coding_challenge:
   - Every following element must be a COMPLETE `def test_<something>():` function (a real pytest test
     function), each on its own list element, with its body indented under it.
   - Write 3-6 small, independent, deterministic tests covering normal cases and at least one edge case.
+  - SELF-CONTAINED OR IT DOES NOT RUN. The tests execute in an empty sandbox that contains only the
+    learner's `solution.py`. Therefore:
+      * NO file or data access of any kind — no `open(...)`, no `pd.read_csv`, no csv/json/parquet
+        paths. Build every input inline as a literal (list, dict, DataFrame constructed in the test).
+      * NO downloaded or bundled datasets — never `from sklearn.datasets import ...`, never a URL.
+      * Only the Python standard library, `pandas` and `numpy` are importable. Nothing else —
+        scikit-learn, scipy, torch, matplotlib and friends are NOT installed.
+      * Declare EVERY import you use at the TOP of the first list element, in the test module itself
+        (e.g. `import pandas as pd`) — nothing is imported for you, and an undeclared name makes
+        every test fail regardless of what the learner wrote.
   - CRITICAL: pytest only collects `def test_*` functions. Do NOT emit bare module-level `assert`
     statements outside a test function — they will not be collected and grading will report 0 tests.
   - Do NOT include the reference implementation — only the tests.

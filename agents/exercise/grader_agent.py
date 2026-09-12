@@ -53,16 +53,33 @@ class GraderAgent:
             raise ValueError("exercise_statement must be a non-empty string")
 
         logger.info("Grader: building grading harness (%s)", exercise_format)
-        try:
-            messages = self.chat_prompt.format_messages(
-                user_query=user_query,
-                exercise_format=exercise_format,
-                exercise_statement=exercise_statement,
-            )
-            return self.structured_llm.invoke(messages)
-        except Exception:
-            logger.exception("Grader: error building grading artifact")
-            return None
+        messages = self.chat_prompt.format_messages(
+            user_query=user_query,
+            exercise_format=exercise_format,
+            exercise_statement=exercise_statement,
+        )
+        # One retry: a test module that cannot run is worse than no tests at all, because grading it
+        # produces a confident wrong score. Validate before handing it to the learner.
+        for attempt in (1, 2):
+            try:
+                artifact = self.structured_llm.invoke(messages)
+            except Exception:
+                logger.exception("Grader: error building grading artifact")
+                return None
+            if artifact is None or artifact.format != "coding_challenge":
+                return artifact  # case_study has no tests to validate
+            reason = self._validate_unit_tests(artifact.unit_tests)
+            if reason is None:
+                return artifact
+            logger.error("Grader: generated tests are unrunnable (attempt %d/2): %s", attempt, reason)
+        return None
+
+    @staticmethod
+    def _validate_unit_tests(unit_tests) -> Optional[str]:
+        """Reason the generated tests can never run, or None. Lazy import: see grade_submission."""
+        from tools.code_executor import check_test_artifact
+
+        return check_test_artifact(unit_tests)
 
 
 # --- Phase B: live grading of a submitted solution ---------------------------------------------

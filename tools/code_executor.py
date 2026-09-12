@@ -21,7 +21,7 @@ import sys
 import signal
 import subprocess
 import tempfile
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 try:
     import resource  # POSIX only
@@ -50,16 +50,61 @@ _SUMMARY_RE = re.compile(r"^MINDMORPH_SUMMARY\s+(\d+)\s+(\d+)\s*$", re.MULTILINE
 _SANDBOX_PATH_RE = re.compile(r"(?:/[^/\s'\"()<>,]+)*/mindmorph_grade_[^/\s'\"()<>,]*(?:/[^/\s'\"()<>,]+)*")
 
 # Self-contained runner written into the temp dir. No third-party imports — works without pytest.
+#
+# The runner splits failures into two kinds, because they mean opposite things:
+#   MINDMORPH_FAILURE — the learner's solution is wrong (assertion failed, missing name, bad value).
+#   MINDMORPH_HARNESS — the GENERATED TEST cannot run at all, whatever the learner submitted
+#                       (imports a library this interpreter lacks, uses an undeclared name, opens a
+#                       data file that does not exist). That is a server-side defect and must never
+#                       be scored as learner knowledge.
 _RUNNER_SRC = '''\
-import importlib, sys, traceback
+import importlib, os, sys, traceback
 
-passed, failures = 0, []
+
+def _harness_reason(e, tb):
+    """Return why this failure is the harness's fault, or None if it is a real learner failure.
+
+    The sandbox contains exactly three files: solution.py, test_solution.py, _runner.py.
+      - ImportError for any module other than `solution` => the grading environment is missing a
+        dependency the generated test assumed. (`solution` itself IS a learner signal: the learner
+        did not define the name the exercise asked for.)
+      - NameError raised inside test_solution.py => the test module used a name it never imported.
+      - SyntaxError in test_solution.py => the generated test is not valid Python.
+      - FileNotFoundError, whatever the frame => the test invented a data path nobody created. This
+        one is deliberately frame-INDEPENDENT: the open usually happens inside the learner's own
+        function, called with a path the test made up, so a deepest-frame test would misblame them.
+    """
+    if isinstance(e, SyntaxError):
+        if e.filename and os.path.basename(e.filename) == "test_solution.py":
+            return "the generated test module is not valid Python"
+        return None
+    if isinstance(e, ImportError):
+        name = getattr(e, "name", None)
+        if name != "solution":
+            return "the grading environment has no module %r" % (name or "?",)
+        return None
+    if isinstance(e, NameError):
+        frames = traceback.extract_tb(tb)
+        if frames and os.path.basename(frames[-1].filename) == "test_solution.py":
+            return "the generated test uses a name it never imported"
+        return None
+    if isinstance(e, FileNotFoundError):
+        return "the generated test expects a data file (%s) that does not exist" % (e.filename or "?",)
+    return None
+
+
+passed, failures, harness = 0, [], []
 try:
     mod = importlib.import_module("test_solution")
 except BaseException as e:
-    # Import-time failure: bad import (e.g. solution missing the required name) or a failing
-    # module-level assert. Report as a hard failure with the cause.
-    print("MINDMORPH_FAILURE collect: " + "".join(traceback.format_exception_only(type(e), e)).strip())
+    # Import-time failure: bad import (e.g. solution missing the required name), a failing
+    # module-level assert, or a broken test module.
+    # One line per failure: the summary parser is line-based, and a multi-line exception rendering
+    # (SyntaxError shows source + caret) would otherwise lose everything after the first line.
+    msg = " ".join("".join(traceback.format_exception_only(type(e), e)).split())
+    reason = _harness_reason(e, e.__traceback__)
+    print(("MINDMORPH_HARNESS " if reason else "MINDMORPH_FAILURE ")
+          + "collect: " + msg + (" [" + reason + "]" if reason else ""))
     print("MINDMORPH_SUMMARY 0 0")
     sys.exit(0)
 
@@ -74,9 +119,15 @@ for name, fn in tests:
         fn()
         passed += 1
     except BaseException as e:
-        msg = "".join(traceback.format_exception_only(type(e), e)).strip()
-        failures.append(name + ": " + msg)
+        msg = " ".join("".join(traceback.format_exception_only(type(e), e)).split())
+        reason = _harness_reason(e, e.__traceback__)
+        if reason:
+            harness.append(name + ": " + msg + " [" + reason + "]")
+        else:
+            failures.append(name + ": " + msg)
 
+for h in harness:
+    print("MINDMORPH_HARNESS " + h)
 for f in failures:
     print("MINDMORPH_FAILURE " + f)
 print("MINDMORPH_SUMMARY %d %d" % (passed, len(tests)))
@@ -129,6 +180,23 @@ def _extract_failures(output: str) -> List[str]:
             for ln in (output or "").splitlines() if ln.startswith("MINDMORPH_FAILURE ")]
 
 
+def _extract_harness(output: str) -> List[str]:
+    """The runner's harness-error lines (broken generated test, not a learner failure)."""
+    return [ln[len("MINDMORPH_HARNESS "):].strip()
+            for ln in (output or "").splitlines() if ln.startswith("MINDMORPH_HARNESS ")]
+
+
+def _harness_result(reasons: List[str], stdout: str = "") -> Dict[str, Any]:
+    """A verdict of "we could not grade this" — deliberately carries NO score.
+
+    Callers must check ``harness_error`` before reading a score: a broken generated test says
+    nothing about the learner, so scoring it 0 would fabricate a knowledge gap (see
+    services/mastery.apply_score, which refuses to record these).
+    """
+    return {"harness_error": True, "failures": reasons, "passed": 0, "total": 0,
+            "stdout": (stdout or "")[-4000:], "timed_out": False}
+
+
 def execute_tests(
     solution_code: str,
     test_code: str,
@@ -140,8 +208,9 @@ def execute_tests(
     Returns: {passed, total, failures, score, stdout, timed_out}. Never raises on test failure.
     """
     if not test_code or not test_code.strip():
-        return {"passed": 0, "total": 0, "failures": [], "score": 0.0,
-                "stdout": "No unit tests were generated.", "timed_out": False}
+        # No tests => nothing was measured. Scoring this 0 would have marked the learner as failing
+        # an exercise that was never graded.
+        return _harness_result(["No unit tests were generated for this exercise."])
 
     tmp = tempfile.mkdtemp(prefix="mindmorph_grade_")
     try:
@@ -160,11 +229,17 @@ def execute_tests(
             return {"passed": 0, "total": 0, "failures": ["Execution timed out (possible infinite loop)."],
                     "score": 0.0, "stdout": (stdout or "")[-4000:], "timed_out": True}
 
+        harness = _extract_harness(stdout)
+        if harness:
+            # The generated test cannot run at all — a server-side defect, not a learner failure.
+            return _harness_result(harness, stdout)
+
         parsed = _parse_summary(stdout or "")
         if parsed is None:
-            # Runner crashed before printing a summary (e.g. syntax error in the solution import).
-            return {"passed": 0, "total": 0, "failures": _extract_failures(stdout) or ["Could not run the tests."],
-                    "score": 0.0, "stdout": (stdout or "")[-4000:], "timed_out": False}
+            # Runner never printed a summary (it crashed or was killed). We have no measurement, so
+            # this is not a learner signal either.
+            return _harness_result(
+                _extract_failures(stdout) or ["The grading runner could not execute the tests."], stdout)
 
         passed, total = parsed
         score = (passed / total * 100.0) if total else 0.0
@@ -178,6 +253,38 @@ def execute_tests(
         }
     finally:
         _rmtree_quiet(tmp)
+
+
+# Generated tests must be self-contained: the sandbox holds only solution.py, so a test that reads a
+# data file can never pass. Catch that statically — a stub dry run cannot, since the open happens
+# inside the (stubbed-out) learner function.
+_FILE_IO_RE = re.compile(
+    r"\bopen\s*\(|\bread_csv\b|\bread_json\b|\bread_excel\b|\bread_parquet\b|\bnp\.load\b"
+    r"|['\"][^'\"]*\.(?:csv|json|txt|parquet|xlsx|npy)['\"]"
+)
+
+# Module-level __getattr__ satisfies both `import solution` and `from solution import anything`, so a
+# dry run exercises the TEST module's own imports/names without needing a reference implementation.
+_STUB_SOLUTION = "def __getattr__(name):\n    return lambda *a, **k: None\n"
+
+
+def check_test_artifact(unit_tests: List[str]) -> Optional[str]:
+    """Validate a freshly generated test module. Returns a reason it can never run, or None if OK.
+
+    Runs the tests against a stub solution: every remaining error is the test module's own fault
+    (missing library, undeclared import, syntax error). Assertion failures against the stub are
+    expected and ignored.
+    """
+    src = "\n".join(unit_tests or [])
+    if not src.strip():
+        return "no unit tests were generated"
+    m = _FILE_IO_RE.search(src)
+    if m:
+        return f"tests read an external file ({m.group(0)!r}); the sandbox has no data files"
+    result = execute_tests(_STUB_SOLUTION, src)
+    if result.get("harness_error"):
+        return "; ".join(result.get("failures") or ["tests could not run"])
+    return None
 
 
 def _run(cmd, cwd, env, timeout):

@@ -75,7 +75,9 @@ export default function SessionPage() {
         });
       }
       if (res.new_node_ids?.length) setRewireFocusIds(res.new_node_ids);
-      if (res.grade_result) {
+      if (res.grade_result?.harness_error) {
+        setLiveMessage("Not graded — the auto-grading tests for this exercise are broken. Your progress is unchanged.");
+      } else if (res.grade_result) {
         const score = Math.round(res.grade_result.score ?? 0);
         const grew = res.new_node_ids?.length ?? 0;
         setLiveMessage(
@@ -305,7 +307,10 @@ function GradedOutcome({
 }) {
   return (
     <article className="surface p-7 md:p-10">
-      <p className="eyebrow mb-4">Graded{label ? ` — ${label}` : ""}</p>
+      <p className="eyebrow mb-4">
+        {outcome.result.harness_error ? "Not graded" : "Graded"}
+        {label ? ` — ${label}` : ""}
+      </p>
 
       <GradeResult result={outcome.result} />
 

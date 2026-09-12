@@ -429,7 +429,17 @@ def grade(ls: dict, node_id: str, solution: str) -> tuple[dict, list[str], dict 
     with collect() as spans:
         with span(exec_stage):
             result = grade_submission(fmt, solution, artifact)
-        if result is not None:
+        if result is not None and result.get("harness_error"):
+            # The generated grading harness is broken — the learner's submission was never actually
+            # measured. Log loudly and record it as a GRADE failure, not an exercise result: no
+            # score, no mastery update, no adaptation, no remedial nodes. (apply_score refuses these
+            # too, so every caller is covered; this branch exists to keep the 0 out of the funnel.)
+            logger.error(
+                "service: GRADING HARNESS BROKEN for node %s — generated tests cannot run, "
+                "NOT a learner failure: %s", node_id, result.get("failures"),
+            )
+            record_event(ls, STAGES.GRADE_FAILURE, node_id=node_id, error="harness_error")
+        elif result is not None:
             apply_score(ls, node_id, fmt, result)
             score = float(result.get("score", 0.0) or 0.0)
             record_event(ls, STAGES.EXERCISE_GRADED, node_id=node_id, score=score,
