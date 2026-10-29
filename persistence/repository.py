@@ -1,6 +1,6 @@
-"""Repository for learning sessions (Repository pattern — see common/patterns.md).
+"""Repository for learning sessions and user management (Repository pattern).
 
-The abstract ``LearningSessionRepository`` is the only interface the service/API layer depends on, so
+The abstract ``LearningSessionRepository`` and ``UserRepository`` are the interfaces the service/API layer depends on, so
 the Postgres engine stays swappable (a future Redis/in-memory impl, or a different DB, drops in without
 touching callers). The Postgres implementation persists each session as a single JSONB row.
 """
@@ -20,6 +20,130 @@ logger = logging.getLogger(__name__)
 
 # Safety cap for list_all() — it loads full session blobs into memory (operator/analytics only).
 LIST_ALL_LIMIT = 5000
+
+
+class UserRepository(ABC):
+    """Storage-agnostic interface for user persistence."""
+
+    @abstractmethod
+    def create(self, user_id: str, email: str, hashed_password: str, full_name: str = "") -> dict:
+        """Create and return user record dict."""
+
+    @abstractmethod
+    def get_by_email(self, email: str) -> Optional[dict]:
+        """Fetch user record by email, or None."""
+
+    @abstractmethod
+    def get_by_id(self, user_id: str) -> Optional[dict]:
+        """Fetch user record by user_id, or None."""
+
+
+class PostgresUserRepository(UserRepository):
+    """PostgreSQL user repository."""
+
+    def create(self, user_id: str, email: str, hashed_password: str, full_name: str = "") -> dict:
+        from persistence.db import get_sessionmaker
+        from persistence.models import UserRow
+
+        Session = get_sessionmaker()
+        with Session() as s:
+            user = UserRow(
+                id=user_id,
+                email=email.strip().lower(),
+                hashed_password=hashed_password,
+                full_name=full_name.strip(),
+            )
+            s.add(user)
+            s.commit()
+            return {
+                "id": user.id,
+                "email": user.email,
+                "full_name": user.full_name,
+                "created_at": user.created_at.isoformat() if user.created_at else None,
+            }
+
+    def get_by_email(self, email: str) -> Optional[dict]:
+        from persistence.db import get_sessionmaker
+        from persistence.models import UserRow
+        from sqlalchemy import select
+
+        Session = get_sessionmaker()
+        with Session() as s:
+            stmt = select(UserRow).where(UserRow.email == email.strip().lower())
+            user = s.execute(stmt).scalar_one_or_none()
+            if not user:
+                return None
+            return {
+                "id": user.id,
+                "email": user.email,
+                "hashed_password": user.hashed_password,
+                "full_name": user.full_name,
+                "created_at": user.created_at.isoformat() if user.created_at else None,
+            }
+
+    def get_by_id(self, user_id: str) -> Optional[dict]:
+        from persistence.db import get_sessionmaker
+        from persistence.models import UserRow
+        from sqlalchemy import select
+
+        Session = get_sessionmaker()
+        with Session() as s:
+            stmt = select(UserRow).where(UserRow.id == user_id)
+            user = s.execute(stmt).scalar_one_or_none()
+            if not user:
+                return None
+            return {
+                "id": user.id,
+                "email": user.email,
+                "hashed_password": user.hashed_password,
+                "full_name": user.full_name,
+                "created_at": user.created_at.isoformat() if user.created_at else None,
+            }
+
+
+class InMemoryUserRepository(UserRepository):
+    """In-memory user repository for zero-infra test/dev."""
+
+    def __init__(self) -> None:
+        self._by_id: dict[str, dict] = {}
+        self._by_email: dict[str, dict] = {}
+
+    def create(self, user_id: str, email: str, hashed_password: str, full_name: str = "") -> dict:
+        norm_email = email.strip().lower()
+        if norm_email in self._by_email:
+            raise ValueError(f"User with email '{norm_email}' already exists")
+        record = {
+            "id": user_id,
+            "email": norm_email,
+            "hashed_password": hashed_password,
+            "full_name": full_name.strip(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self._by_id[user_id] = record
+        self._by_email[norm_email] = record
+        return {
+            "id": record["id"],
+            "email": record["email"],
+            "full_name": record["full_name"],
+            "created_at": record["created_at"],
+        }
+
+    def get_by_email(self, email: str) -> Optional[dict]:
+        return self._by_email.get(email.strip().lower())
+
+    def get_by_id(self, user_id: str) -> Optional[dict]:
+        return self._by_id.get(user_id)
+
+
+_user_memory_singleton = InMemoryUserRepository()
+
+
+def get_default_user_repository() -> UserRepository:
+    """Return the configured UserRepository."""
+    store = os.getenv("MINDMORPH_STORE", "postgres").lower()
+    if store == "memory":
+        return _user_memory_singleton
+    return PostgresUserRepository()
 
 
 class LearningSessionRepository(ABC):
@@ -147,11 +271,6 @@ class PostgresLearningSessionRepository(LearningSessionRepository):
 class InMemoryLearningSessionRepository(LearningSessionRepository):
     """Explicit process-local development/test store. Never a hidden database fallback.
     NOT durable across process restarts — use Postgres for real persistence.
-
-    Stored dicts are round-tripped through ``json.dumps/loads`` (NOT deepcopy) on the way in: this both
-    isolates persisted state from caller mutation AND faithfully mirrors the JSONB store — a value the
-    real Postgres column would reject (a Pydantic model, datetime, set …) raises here too, so the dev
-    store can't pass something production would fail on.
     """
 
     def __init__(self) -> None:
@@ -203,8 +322,6 @@ class InMemoryLearningSessionRepository(LearningSessionRepository):
             return [(uid, sid, json.loads(row["data"])) for (uid, sid), row in self._store.items()]
 
 
-# A single in-memory instance shared across the process when the memory store is selected, so the API
-# and any same-process caller see the same data (the dict must outlive a single request).
 _memory_singleton = InMemoryLearningSessionRepository()
 
 
